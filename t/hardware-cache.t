@@ -3,6 +3,7 @@ use strict;
 use warnings;
 
 use File::Temp qw(tempdir);
+use POSIX ();
 use Scalar::Util qw(blessed);
 use Test::More 'no_plan';
 use lib 'conditions/lib';
@@ -141,14 +142,18 @@ for my $number (1 .. 6) {
             $output,
             boot_identifier => 'concurrent-boot',
             collector => sub {
-                open(my $log, '>>', $collection_log) or exit 2;
+                open(my $log, '>>', $collection_log) or POSIX::_exit(2);
                 print {$log} "collected\n";
                 close $log;
                 select undef, undef, undef, 0.1;
                 return snapshot(8);
             },
         );
-        exit($result->{model} eq snapshot(8)->{model} ? 0 : 3);
+        # A forked child must not run Perl's normal exit path here: global
+        # destruction would fire File::Temp's cleanup END block a second
+        # time for the tempdir this process inherited from its parent,
+        # deleting it out from under any siblings still using it.
+        POSIX::_exit($result->{model} eq snapshot(8)->{model} ? 0 : 3);
     }
     push @children, $pid;
 }

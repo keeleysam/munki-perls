@@ -4,6 +4,7 @@ use warnings;
 
 use File::Path qw(mkpath);
 use File::Temp qw(tempdir tempfile);
+use POSIX ();
 use Scalar::Util qw(blessed);
 use Test::More 'no_plan';
 use lib 'conditions/lib';
@@ -199,7 +200,11 @@ for my $number (1 .. 8) {
         my $ok = eval {
             write_perls($concurrent, { "key$number" => perl_string("value$number") });
         };
-        exit($ok ? 0 : 1);
+        # A forked child must not run Perl's normal exit path here: global
+        # destruction would fire File::Temp's cleanup END block a second
+        # time for the tempdir this process inherited from its parent,
+        # deleting it out from under any siblings still using it.
+        POSIX::_exit($ok ? 0 : 1);
     }
     push @children, $pid;
 }
