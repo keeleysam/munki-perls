@@ -16,50 +16,58 @@ is_deeply(
 my $retired_term = join('', qw(f a c t));
 my $approved_upstream_name = 'munki-' . $retired_term . 's';
 my @project_files;
-open(my $tracked, '-|', 'git', 'ls-files', '-z')
-    or die "Could not list tracked files\n";
-{
+
+# git is required to know the exact tracked-file set (so leftover build
+# output and other untracked cruft never end up scanned or missed); on a
+# machine without git this whole block is skipped rather than crashing.
+my $git_ok = eval {
+    open(my $tracked, '-|', 'git', 'ls-files', '-z') or die "$!\n";
     local $/ = "\0";
     while (my $file = <$tracked>) {
         $file =~ s/\0\z//;
         push @project_files, $file if length($file) && -f $file;
     }
-}
-close $tracked or die "Could not list tracked files\n";
+    close($tracked) or die "git ls-files failed\n";
+    1;
+};
 
-for my $file (sort @project_files) {
-    unlike($file, qr/$retired_term/i, "$file avoids retired terminology");
+SKIP: {
+    skip 'git is required to list tracked files', 1 unless $git_ok;
 
-    open(my $fh, '<', $file) or die $!;
-    binmode $fh;
-    local $/;
-    my $source = <$fh>;
-    close $fh;
-    next if index($source, "\0") >= 0;
+    for my $file (sort @project_files) {
+        unlike($file, qr/$retired_term/i, "$file avoids retired terminology");
 
-    while ($source =~ /$retired_term/ig) {
-        my $start = $-[0];
-        my $candidate = $start >= 6
-            ? substr($source, $start - 6, length($approved_upstream_name))
-            : '';
-        my $after = $start >= 6
-            ? substr(
-                $source,
-                $start - 6 + length($approved_upstream_name),
-                1
-            )
-            : '';
-        my $approved = $file eq 'README.md'
-            && lc($candidate) eq $approved_upstream_name
-            && $after !~ /[A-Za-z0-9_-]/;
-        if (!$approved && $file eq '.github/workflows/pages.yml') {
-            my $line_start = rindex($source, "\n", $start) + 1;
-            my $line_end = index($source, "\n", $start);
-            $line_end = length($source) if $line_end < 0;
-            my $line = substr($source, $line_start, $line_end - $line_start);
-            $approved = $line =~ m{actions/upload-pages-arti$retired_term\@v4};
+        open(my $fh, '<', $file) or die $!;
+        binmode $fh;
+        local $/;
+        my $source = <$fh>;
+        close $fh;
+        next if index($source, "\0") >= 0;
+
+        while ($source =~ /$retired_term/ig) {
+            my $start = $-[0];
+            my $candidate = $start >= 6
+                ? substr($source, $start - 6, length($approved_upstream_name))
+                : '';
+            my $after = $start >= 6
+                ? substr(
+                    $source,
+                    $start - 6 + length($approved_upstream_name),
+                    1
+                )
+                : '';
+            my $approved = $file eq 'README.md'
+                && lc($candidate) eq $approved_upstream_name
+                && $after !~ /[A-Za-z0-9_-]/;
+            if (!$approved && $file eq '.github/workflows/pages.yml') {
+                my $line_start = rindex($source, "\n", $start) + 1;
+                my $line_end = index($source, "\n", $start);
+                $line_end = length($source) if $line_end < 0;
+                my $line = substr($source, $line_start, $line_end - $line_start);
+                $approved = $line =~ m{actions/upload-pages-arti$retired_term\@v4};
+            }
+            ok($approved, "$file uses only the approved upstream project name");
         }
-        ok($approved, "$file uses only the approved upstream project name");
     }
 }
 
