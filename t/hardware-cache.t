@@ -18,8 +18,12 @@ sub snapshot {
     return {
         version => '15.5',
         model => "Mac$marker,1",
-        board_id => "Mac-BOARD-$marker",
         hardware_target => "J${marker}AP",
+        cpu_type => 'intel',
+        cpu_family => '',
+        cpu_64bit => $marker % 2,
+        cpu_frequency_mhz => 2000 + $marker,
+        ram_mb => 8192,
         is_virtual => $marker % 2,
     };
 }
@@ -63,8 +67,8 @@ while (my $key = $keys->nextObject()) {
 is_deeply(
     [sort @cache_keys],
     [sort qw(
-        board_id boot_identifier hardware_target is_virtual model
-        schema_version version
+        boot_identifier cpu_64bit cpu_family cpu_frequency_mhz cpu_type
+        hardware_target is_virtual model ram_mb schema_version version
     )],
     'cache contains only boot, schema, OS, and hardware fields'
 );

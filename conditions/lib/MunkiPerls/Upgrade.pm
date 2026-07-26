@@ -971,27 +971,6 @@ sub is_version_at_least {
     return defined($comparison) && $comparison >= 0 ? 1 : 0;
 }
 
-sub _dictionary_value {
-    my ($dictionary, $key) = @_;
-    return '' unless blessed($dictionary) && $$dictionary;
-    my $value = eval {
-        $dictionary->objectForKey_(foundation_string($key));
-    };
-    return objc_string($value);
-}
-
-sub _ioreg_board_id {
-    my ($output) = @_;
-    my $plist = parse_plist_output($output);
-    return '' unless blessed($plist) && $$plist;
-    return '' unless $plist->isKindOfClass_(NSArray->class());
-    return '' unless $plist->count();
-
-    my $dictionary = $plist->objectAtIndex_(0);
-    return '' unless blessed($dictionary) && $$dictionary;
-    return _dictionary_value($dictionary, 'board-id');
-}
-
 # Recursively search a parsed plist tree for the first string (or
 # string-convertible) value under the given key, wherever it appears.
 # Mirrors virtual_type.pl's own tree walk: system_profiler's XML shape
@@ -1038,44 +1017,38 @@ sub _sysctl {
     return $output;
 }
 
+sub _cpu_type_name {
+    my ($cputype) = @_;
+    return 'powerpc' if $cputype eq '18';
+    return 'intel' if $cputype eq '7' || $cputype eq '16777223';
+    return 'arm' if $cputype eq '12' || $cputype eq '16777228';
+    return '';
+}
+
+sub _cpu_family_name {
+    my ($cpu_type, $cpusubtype) = @_;
+    return '' unless $cpu_type eq 'powerpc';
+    return 'g3' if $cpusubtype eq '9';
+    return 'g4' if $cpusubtype eq '10' || $cpusubtype eq '11';
+    return 'g5' if $cpusubtype eq '100' || $cpusubtype eq '101' || $cpusubtype eq '102';
+    return '';
+}
+
 sub collect_hardware_snapshot {
     my (%options) = @_;
     my $version = defined($options{version})
         ? $options{version}
         : system_version($options{system_version_path});
 
-    # ioreg's -a/-r/-d options do not exist on Mac OS X 10.4 Tiger's ioreg
-    # (confirmed against real PowerPC hardware: it just prints usage and
-    # exits nonzero) - skip the call there instead of running a command
-    # already known to fail. This is gated on OS version, not CPU
-    # architecture: Leopard (10.5) still supports PowerPC, and whether -a
-    # exists on Leopard/Snow Leopard's ioreg (on any architecture) is not
-    # yet confirmed either way, so this only skips the release actually
-    # tested. board_id staying empty below Leopard is harmless for every
-    # *_upgrade_supported check today, since none of them target an OS
-    # release Tiger could ever be eligible for regardless.
-    my $board_id = '';
-    if (defined $options{ioreg_output}) {
-        $board_id = _ioreg_board_id($options{ioreg_output});
-    } elsif (is_version_at_least($version, '10.5')) {
-        my ($ok, $output);
-        if ($options{ioreg_probe}) {
-            ($ok, $output) = $options{ioreg_probe}->();
-        } else {
-            ($ok, $output) = run_command(
-                {}, '/usr/sbin/ioreg', '-a', '-rd1',
-                '-c', 'IOPlatformExpertDevice'
-            );
-        }
-        $board_id = _ioreg_board_id($output) if $ok;
-    }
-
     # machine_model comes from the system_profiler call every plugin
     # already shares (see system_profiler_snapshot in MunkiPerls.pm)
-    # rather than a separate ioreg call: system_profiler derives it from
-    # the same underlying IOKit property, so this works identically on
-    # every OS version with no ioreg -a dependency, and no extra process
-    # spawned beyond the one system_profiler_snapshot() already makes.
+    # rather than ioreg: system_profiler derives it from the same
+    # underlying IOKit property, so this works identically on every OS
+    # version with no extra process spawned beyond the one
+    # system_profiler_snapshot() already makes. board-id is dropped
+    # entirely - no confirmed evidence it ever diverges from model in
+    # outcome for any machine in this table, so there is no longer any
+    # ioreg call in this function at all.
     my ($profiler_ok, $profiler_output);
     if (defined $options{profiler_output}) {
         ($profiler_ok, $profiler_output) = (1, $options{profiler_output});
@@ -1101,6 +1074,22 @@ sub collect_hardware_snapshot {
         ? $options{hardware_target}
         : $sysctl->('hw.target');
 
+    my $cpu_type = defined($options{cpu_type})
+        ? $options{cpu_type}
+        : _cpu_type_name($sysctl->('hw.cputype'));
+    my $cpu_family = defined($options{cpu_family})
+        ? $options{cpu_family}
+        : _cpu_family_name($cpu_type, $sysctl->('hw.cpusubtype'));
+    my $cpu_64bit = defined($options{cpu_64bit})
+        ? $options{cpu_64bit}
+        : ($sysctl->('hw.cpu64bit_capable') =~ /\A[1-9]\d*\z/ ? 1 : 0);
+    my $cpu_frequency_mhz = defined($options{cpu_frequency_mhz})
+        ? $options{cpu_frequency_mhz}
+        : int(($sysctl->('hw.cpufrequency') || 0) / 1_000_000);
+    my $ram_mb = defined($options{ram_mb})
+        ? $options{ram_mb}
+        : int(($sysctl->('hw.memsize') || 0) / (1024 * 1024));
+
     my $virtual;
     if (defined $options{is_virtual}) {
         $virtual = $options{is_virtual} ? 1 : 0;
@@ -1115,8 +1104,12 @@ sub collect_hardware_snapshot {
     return {
         version => $version,
         model => $model,
-        board_id => $board_id,
         hardware_target => $hardware_target,
+        cpu_type => $cpu_type,
+        cpu_family => $cpu_family,
+        cpu_64bit => $cpu_64bit,
+        cpu_frequency_mhz => $cpu_frequency_mhz,
+        ram_mb => $ram_mb,
         is_virtual => $virtual,
     };
 }
@@ -1162,7 +1155,7 @@ sub _snapshot_from_cache {
     return unless defined($cached_boot) && $cached_boot eq $boot_identifier;
 
     my %snapshot;
-    for my $key (qw(version model board_id hardware_target)) {
+    for my $key (qw(version model hardware_target cpu_type cpu_family cpu_64bit cpu_frequency_mhz ram_mb)) {
         my $value = _cache_string($cache, $key);
         return unless defined $value;
         $snapshot{$key} = $value;
@@ -1187,7 +1180,7 @@ sub _write_snapshot_cache {
         foundation_string($boot_identifier),
         foundation_string('boot_identifier')
     );
-    for my $key (qw(version model board_id hardware_target)) {
+    for my $key (qw(version model hardware_target cpu_type cpu_family cpu_64bit cpu_frequency_mhz ram_mb)) {
         $cache->setObject_forKey_(
             foundation_string(defined($snapshot->{$key}) ? $snapshot->{$key} : ''),
             foundation_string($key)

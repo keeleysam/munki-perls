@@ -179,7 +179,6 @@ for my $boundary (
 
 my $pre_bigsur_vm = collect_hardware_snapshot(
     version => '10.15.7',
-    ioreg_output => 'not a plist',
     profiler_output => 'not a plist',
     sysctl_values => {
         'hw.target' => '',
@@ -190,7 +189,6 @@ ok($pre_bigsur_vm->{is_virtual}, 'pre-Big-Sur VMM feature means virtual');
 
 my $pre_bigsur_physical = collect_hardware_snapshot(
     version => '10.15.7',
-    ioreg_output => 'not a plist',
     profiler_output => 'not a plist',
     sysctl_values => {
         'hw.target' => '',
@@ -201,7 +199,6 @@ ok(!$pre_bigsur_physical->{is_virtual}, 'pre-Big-Sur system without VMM is physi
 
 my $modern_vm = collect_hardware_snapshot(
     version => '11.0',
-    ioreg_output => 'not a plist',
     profiler_output => 'not a plist',
     sysctl_values => {
         'hw.target' => '',
@@ -210,21 +207,6 @@ my $modern_vm = collect_hardware_snapshot(
 );
 ok($modern_vm->{is_virtual}, 'Big Sur and newer use kern.hv_vmm_present');
 
-my $board_id_fixture = qq{<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<array>
-    <dict>
-        <key>board-id</key>
-        <string>Mac-FAKE0000000001</string>
-    </dict>
-</array>
-</plist>};
-
-# Shaped like the real, shared system_profiler_snapshot() result: an array
-# with one entry per requested data type, including one (config profiles)
-# that never has the key we want. Proves the recursive search finds
-# machine_model regardless of which other entries are present.
 my $profiler_fixture = qq{<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -249,27 +231,49 @@ my $profiler_fixture = qq{<?xml version="1.0" encoding="UTF-8"?>
 </array>
 </plist>};
 
-my $ioreg_calls = 0;
 my $tiger_snapshot = collect_hardware_snapshot(
     version => '10.4.11',
-    ioreg_probe => sub { $ioreg_calls++; return (1, $board_id_fixture) },
     profiler_output => $profiler_fixture,
-    sysctl_values => { 'hw.target' => '', 'machdep.cpu.features' => '' },
+    sysctl_values => {
+        'hw.target' => '', 'machdep.cpu.features' => '',
+        'hw.cputype' => '18', 'hw.cpusubtype' => '100',
+        'hw.cpu64bit_capable' => '0', 'hw.cpufrequency' => '2000000004',
+        'hw.memsize' => '2147483648',
+    },
 );
-is($ioreg_calls, 0, 'ioreg -a is never invoked below Leopard');
-is($tiger_snapshot->{model}, 'Mac99,9', 'pre-Leopard hardware identity model comes from system_profiler');
-is($tiger_snapshot->{board_id}, '', 'pre-Leopard hardware identity board_id is empty');
+is($tiger_snapshot->{model}, 'Mac99,9', 'hardware identity model comes from system_profiler on any OS version');
+ok(!exists $tiger_snapshot->{board_id}, 'the snapshot no longer has a board_id field at all');
+is($tiger_snapshot->{cpu_type}, 'powerpc', 'cpu_type is read from hw.cputype');
+is($tiger_snapshot->{cpu_family}, 'g5', 'cpu_family is read from hw.cpusubtype (970/G5 constant)');
+is($tiger_snapshot->{cpu_64bit}, 0, 'cpu_64bit is read from hw.cpu64bit_capable');
+is($tiger_snapshot->{cpu_frequency_mhz}, 2000, 'cpu_frequency_mhz is hw.cpufrequency converted from Hz to MHz');
+is($tiger_snapshot->{ram_mb}, 2048, 'ram_mb is hw.memsize converted from bytes to MB');
 
-$ioreg_calls = 0;
-my $leopard_snapshot = collect_hardware_snapshot(
-    version => '10.5.8',
-    ioreg_probe => sub { $ioreg_calls++; return (1, $board_id_fixture) },
+my $intel_snapshot = collect_hardware_snapshot(
+    version => '15.0',
     profiler_output => $profiler_fixture,
-    sysctl_values => { 'hw.target' => '', 'machdep.cpu.features' => '' },
+    sysctl_values => {
+        'hw.target' => '', 'kern.hv_vmm_present' => '',
+        'hw.cputype' => '7', 'hw.cpusubtype' => '0',
+        'hw.cpu64bit_capable' => '1', 'hw.cpufrequency' => '3200000000',
+        'hw.memsize' => '17179869184',
+    },
 );
-is($ioreg_calls, 1, 'ioreg -a is invoked once on Leopard and newer');
-is($leopard_snapshot->{model}, 'Mac99,9', 'Leopard and newer hardware identity model comes from system_profiler');
-is($leopard_snapshot->{board_id}, 'Mac-FAKE0000000001', 'Leopard and newer hardware identity board_id is parsed from ioreg');
+is($intel_snapshot->{cpu_type}, 'intel', 'cpu_type maps CPU_TYPE_X86 to intel');
+is($intel_snapshot->{cpu_family}, '', 'cpu_family is empty for non-PowerPC hardware');
+is($intel_snapshot->{cpu_64bit}, 1, 'cpu_64bit is truthy when hw.cpu64bit_capable is 1');
+
+my $arm_snapshot = collect_hardware_snapshot(
+    version => '15.0',
+    profiler_output => $profiler_fixture,
+    sysctl_values => {
+        'hw.target' => 'J413AP', 'kern.hv_vmm_present' => '',
+        'hw.cputype' => '16777228', 'hw.cpusubtype' => '2',
+        'hw.cpu64bit_capable' => '1', 'hw.cpufrequency' => '0',
+        'hw.memsize' => '17179869184',
+    },
+);
+is($arm_snapshot->{cpu_type}, 'arm', 'cpu_type maps CPU_TYPE_ARM64 to arm');
 
 is(scalar(keys %{perls()}), 10, 'consolidated evaluator emits ten upgrade perls');
 
