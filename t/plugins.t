@@ -1,4 +1,4 @@
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 
@@ -31,7 +31,7 @@ my $directory = tempdir(CLEANUP => 1);
 chmod 0700, $directory or die $!;
 
 my $first = write_plugin($directory, '00_first.pl', <<'PLUGIN');
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 use MunkiPerls qw(perl_string);
@@ -47,7 +47,7 @@ sub perls {
 PLUGIN
 
 my $types = write_plugin($directory, '10_types.pl', <<'PLUGIN');
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 use MunkiPerls qw(
@@ -74,7 +74,7 @@ sub perls {
 PLUGIN
 
 write_plugin($directory, '20_invalid.pl', <<'PLUGIN');
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 use MunkiPerls qw(perl_string);
@@ -88,7 +88,7 @@ sub perls {
 PLUGIN
 
 write_plugin($directory, '30_runtime.pl', <<'PLUGIN');
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 sub perls { die "collector exploded\n" }
@@ -96,7 +96,7 @@ sub perls { die "collector exploded\n" }
 PLUGIN
 
 write_plugin($directory, '40_missing_interface.pl', <<'PLUGIN');
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 1;
@@ -105,7 +105,7 @@ PLUGIN
 write_plugin($directory, '50_syntax.pl', "use strict; this is not perl;\n");
 
 my $last = write_plugin($directory, '60_last.pl', <<'PLUGIN');
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 use MunkiPerls qw(perl_string);
@@ -115,7 +115,7 @@ sub perls { return { collision => perl_string('last') } }
 PLUGIN
 
 write_plugin($directory, '70_empty.pl', <<'PLUGIN');
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 sub perls { return {} }
@@ -292,7 +292,7 @@ sub write_marker_plugin {
         map { "$_ => perl_string('$_')" } @{$keys}
     );
     write_plugin($selection_directory, "$name.pl", <<PLUGIN);
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 use MunkiPerls qw(perl_string);

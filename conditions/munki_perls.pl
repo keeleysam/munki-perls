@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 use FindBin;
