@@ -83,6 +83,7 @@ for my $boundary (
 my $pre_bigsur_vm = collect_hardware_snapshot(
     version => '10.15.7',
     ioreg_output => 'not a plist',
+    profiler_output => 'not a plist',
     sysctl_values => {
         'hw.target' => '',
         'machdep.cpu.features' => 'SSE4 VMM AVX',
@@ -93,6 +94,7 @@ ok($pre_bigsur_vm->{is_virtual}, 'pre-Big-Sur VMM feature means virtual');
 my $pre_bigsur_physical = collect_hardware_snapshot(
     version => '10.15.7',
     ioreg_output => 'not a plist',
+    profiler_output => 'not a plist',
     sysctl_values => {
         'hw.target' => '',
         'machdep.cpu.features' => 'SSE4 AVX',
@@ -103,12 +105,74 @@ ok(!$pre_bigsur_physical->{is_virtual}, 'pre-Big-Sur system without VMM is physi
 my $modern_vm = collect_hardware_snapshot(
     version => '11.0',
     ioreg_output => 'not a plist',
+    profiler_output => 'not a plist',
     sysctl_values => {
         'hw.target' => '',
         'kern.hv_vmm_present' => '1',
     },
 );
 ok($modern_vm->{is_virtual}, 'Big Sur and newer use kern.hv_vmm_present');
+
+my $board_id_fixture = qq{<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+    <dict>
+        <key>board-id</key>
+        <string>Mac-FAKE0000000001</string>
+    </dict>
+</array>
+</plist>};
+
+# Shaped like the real, shared system_profiler_snapshot() result: an array
+# with one entry per requested data type, including one (config profiles)
+# that never has the key we want. Proves the recursive search finds
+# machine_model regardless of which other entries are present.
+my $profiler_fixture = qq{<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+    <dict>
+        <key>_dataType</key>
+        <string>SPConfigurationProfileDataType</string>
+    </dict>
+    <dict>
+        <key>_dataType</key>
+        <string>SPHardwareDataType</string>
+        <key>_items</key>
+        <array>
+            <dict>
+                <key>_name</key>
+                <string>hardware_overview</string>
+                <key>machine_model</key>
+                <string>Mac99,9</string>
+            </dict>
+        </array>
+    </dict>
+</array>
+</plist>};
+
+my $ioreg_calls = 0;
+my $tiger_snapshot = collect_hardware_snapshot(
+    version => '10.4.11',
+    ioreg_probe => sub { $ioreg_calls++; return (1, $board_id_fixture) },
+    profiler_output => $profiler_fixture,
+    sysctl_values => { 'hw.target' => '', 'machdep.cpu.features' => '' },
+);
+is($ioreg_calls, 0, 'ioreg -a is never invoked below Leopard');
+is($tiger_snapshot->{model}, 'Mac99,9', 'pre-Leopard hardware identity model comes from system_profiler');
+is($tiger_snapshot->{board_id}, '', 'pre-Leopard hardware identity board_id is empty');
+
+$ioreg_calls = 0;
+my $leopard_snapshot = collect_hardware_snapshot(
+    version => '10.5.8',
+    ioreg_probe => sub { $ioreg_calls++; return (1, $board_id_fixture) },
+    profiler_output => $profiler_fixture,
+    sysctl_values => { 'hw.target' => '', 'machdep.cpu.features' => '' },
+);
+is($ioreg_calls, 1, 'ioreg -a is invoked once on Leopard and newer');
+is($leopard_snapshot->{model}, 'Mac99,9', 'Leopard and newer hardware identity model comes from system_profiler');
+is($leopard_snapshot->{board_id}, 'Mac-FAKE0000000001', 'Leopard and newer hardware identity board_id is parsed from ioreg');
 
 is(scalar(keys %{perls()}), 10, 'consolidated evaluator emits ten upgrade perls');
 

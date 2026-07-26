@@ -11,7 +11,8 @@ use Scalar::Util qw(blessed);
 
 use MunkiPerls qw(
     foundation_dictionary foundation_string load_plist_file objc_string
-    parse_plist_output run_command system_version write_plist_file
+    parse_plist_output run_command system_profiler_snapshot system_version
+    write_plist_file
 );
 
 our @EXPORT_OK = qw(
@@ -979,19 +980,52 @@ sub _dictionary_value {
     return objc_string($value);
 }
 
-sub _ioreg_identity {
+sub _ioreg_board_id {
     my ($output) = @_;
     my $plist = parse_plist_output($output);
-    return ('', '') unless blessed($plist) && $$plist;
-    return ('', '') unless $plist->isKindOfClass_(NSArray->class());
-    return ('', '') unless $plist->count();
+    return '' unless blessed($plist) && $$plist;
+    return '' unless $plist->isKindOfClass_(NSArray->class());
+    return '' unless $plist->count();
 
     my $dictionary = $plist->objectAtIndex_(0);
-    return ('', '') unless blessed($dictionary) && $$dictionary;
-    return (
-        _dictionary_value($dictionary, 'model'),
-        _dictionary_value($dictionary, 'board-id')
-    );
+    return '' unless blessed($dictionary) && $$dictionary;
+    return _dictionary_value($dictionary, 'board-id');
+}
+
+# Recursively search a parsed plist tree for the first string (or
+# string-convertible) value under the given key, wherever it appears.
+# Mirrors virtual_type.pl's own tree walk: system_profiler's XML shape
+# nests the field we want a few levels deep, and searching generically
+# is more robust across OS versions than hardcoding that exact path.
+sub _string_for_key_in_object {
+    my ($object, $wanted_key) = @_;
+    return '' unless blessed($object) && $$object;
+
+    if ($object->isKindOfClass_(NSDictionary->class())) {
+        my $keys = $object->keyEnumerator();
+        while (my $key_object = $keys->nextObject()) {
+            last unless blessed($key_object) && $$key_object;
+            my $value = $object->objectForKey_($key_object);
+            if (objc_string($key_object) eq $wanted_key) {
+                my $text = objc_string($value);
+                return $text if length $text;
+            }
+            my $found = _string_for_key_in_object($value, $wanted_key);
+            return $found if length $found;
+        }
+        return '';
+    }
+
+    if ($object->isKindOfClass_(NSArray->class())) {
+        my $items = $object->objectEnumerator();
+        while (my $item = $items->nextObject()) {
+            last unless blessed($item) && $$item;
+            my $found = _string_for_key_in_object($item, $wanted_key);
+            return $found if length $found;
+        }
+        return '';
+    }
+    return '';
 }
 
 sub _sysctl {
@@ -1010,16 +1044,49 @@ sub collect_hardware_snapshot {
         ? $options{version}
         : system_version($options{system_version_path});
 
-    my ($model, $board_id) = ('', '');
+    # ioreg's -a/-r/-d options do not exist on Mac OS X 10.4 Tiger's ioreg
+    # (confirmed against real PowerPC hardware: it just prints usage and
+    # exits nonzero) - skip the call there instead of running a command
+    # already known to fail. This is gated on OS version, not CPU
+    # architecture: Leopard (10.5) still supports PowerPC, and whether -a
+    # exists on Leopard/Snow Leopard's ioreg (on any architecture) is not
+    # yet confirmed either way, so this only skips the release actually
+    # tested. board_id staying empty below Leopard is harmless for every
+    # *_upgrade_supported check today, since none of them target an OS
+    # release Tiger could ever be eligible for regardless.
+    my $board_id = '';
     if (defined $options{ioreg_output}) {
-        ($model, $board_id) = _ioreg_identity($options{ioreg_output});
-    } else {
-        my ($ok, $output) = run_command(
-            {}, '/usr/sbin/ioreg', '-a', '-rd1',
-            '-c', 'IOPlatformExpertDevice'
-        );
-        ($model, $board_id) = _ioreg_identity($output) if $ok;
+        $board_id = _ioreg_board_id($options{ioreg_output});
+    } elsif (is_version_at_least($version, '10.5')) {
+        my ($ok, $output);
+        if ($options{ioreg_probe}) {
+            ($ok, $output) = $options{ioreg_probe}->();
+        } else {
+            ($ok, $output) = run_command(
+                {}, '/usr/sbin/ioreg', '-a', '-rd1',
+                '-c', 'IOPlatformExpertDevice'
+            );
+        }
+        $board_id = _ioreg_board_id($output) if $ok;
     }
+
+    # machine_model comes from the system_profiler call every plugin
+    # already shares (see system_profiler_snapshot in MunkiPerls.pm)
+    # rather than a separate ioreg call: system_profiler derives it from
+    # the same underlying IOKit property, so this works identically on
+    # every OS version with no ioreg -a dependency, and no extra process
+    # spawned beyond the one system_profiler_snapshot() already makes.
+    my ($profiler_ok, $profiler_output);
+    if (defined $options{profiler_output}) {
+        ($profiler_ok, $profiler_output) = (1, $options{profiler_output});
+    } else {
+        ($profiler_ok, $profiler_output) = system_profiler_snapshot();
+    }
+    my $model = $profiler_ok
+        ? _string_for_key_in_object(
+            parse_plist_output($profiler_output), 'machine_model'
+        )
+        : '';
 
     my $sysctl = sub {
         my ($name) = @_;
