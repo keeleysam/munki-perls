@@ -41,9 +41,11 @@ sub shard {
     } elsif ($options{ioreg_probe}) {
         ($ok, $output) = $options{ioreg_probe}->();
     } else {
+        # -r/-d were only added to ioreg well after Mac OS X 10.4; a bare
+        # -c still walks far enough to reach IOPlatformExpertDevice's own
+        # properties on every version, from Tiger through current macOS.
         ($ok, $output) = run_command(
-            {}, '/usr/sbin/ioreg', '-rd1', '-c',
-            'IOPlatformExpertDevice'
+            {}, '/usr/sbin/ioreg', '-c', 'IOPlatformExpertDevice'
         );
     }
     return 99 unless $ok;
