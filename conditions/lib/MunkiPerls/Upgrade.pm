@@ -1239,19 +1239,55 @@ sub cached_hardware_snapshot {
     return $snapshot;
 }
 
+sub _model_matches {
+    my ($condition, $snapshot) = @_;
+    my $model = $snapshot->{model} || '';
+    return 0 unless length $model;
+    return $condition->{values}{$model} ? 1 : 0;
+}
+
+sub _hardware_target_matches {
+    my ($condition, $snapshot) = @_;
+    my $target = $snapshot->{hardware_target} || '';
+    return 0 unless length $target;
+    return $condition->{values}{$target} ? 1 : 0;
+}
+
+sub _cpu_matches {
+    my ($condition, $snapshot) = @_;
+    return 0 unless ($snapshot->{cpu_type} || '') eq ($condition->{cpu_type} || '');
+    if (defined $condition->{cpu_family}) {
+        return 0 unless ($snapshot->{cpu_family} || '') eq $condition->{cpu_family};
+    }
+    if (defined $condition->{min_frequency_mhz}) {
+        return 0 unless ($snapshot->{cpu_frequency_mhz} || 0) >= $condition->{min_frequency_mhz};
+    }
+    if ($condition->{cpu_64bit}) {
+        return 0 unless $snapshot->{cpu_64bit};
+    }
+    return 1;
+}
+
+sub _condition_matches {
+    my ($condition, $snapshot) = @_;
+    if ($condition->{all}) {
+        for my $sub_condition (@{$condition->{all}}) {
+            return 0 unless _condition_matches($sub_condition, $snapshot);
+        }
+        return 1;
+    }
+    my $type = $condition->{type} || '';
+    return _model_matches($condition, $snapshot) if $type eq 'model';
+    return _hardware_target_matches($condition, $snapshot) if $type eq 'hardware_target';
+    return _cpu_matches($condition, $snapshot) if $type eq 'cpu';
+    return 0;
+}
+
 sub _physical_supported {
     my ($release, $snapshot) = @_;
-    my $model = $snapshot->{model} || '';
-    my $board = $snapshot->{board_id} || '';
-    my $target = $snapshot->{hardware_target} || '';
-
-    if ($release->{require_model_and_board}) {
-        return 0 if !length($model) || $release->{blocked_models}{$model};
-        return $release->{boards}{$board} ? 1 : 0;
+    for my $condition (@{$release->{allow} || []}) {
+        return 1 if _condition_matches($condition, $snapshot);
     }
-    return 1 if $release->{models}{$model};
-    return 1 if $release->{boards}{$board};
-    return 1 if $release->{hardware_targets}{$target};
     return 0;
 }
 

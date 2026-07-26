@@ -9,6 +9,103 @@ use MunkiPerls::Upgrade qw(
     version_compare
 );
 
+# Exercised directly against _physical_supported via a synthetic release,
+# not through the real @RELEASES table - these test the matcher dispatch
+# itself, independent of any real release's data. A leading underscore is
+# just a naming convention in Perl, not access control, so a fully
+# qualified call works with no special syntax needed.
+ok(MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'model', values => { 'iMac14,1' => 1 } } ] },
+    { model => 'iMac14,1' },
+), 'model condition matches when snapshot model is in values');
+ok(!MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'model', values => { 'iMac14,1' => 1 } } ] },
+    { model => 'iMac15,1' },
+), 'model condition rejects when snapshot model is not in values');
+
+ok(MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'hardware_target', values => { 'J293AP' => 1 } } ] },
+    { hardware_target => 'J293AP' },
+), 'hardware_target condition matches when snapshot target is in values');
+ok(!MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'hardware_target', values => { 'J293AP' => 1 } } ] },
+    { hardware_target => '' },
+), 'hardware_target condition rejects an empty snapshot target');
+
+ok(MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'cpu', cpu_type => 'intel' } ] },
+    { cpu_type => 'intel', cpu_family => '', cpu_64bit => 0, cpu_frequency_mhz => 0 },
+), 'cpu condition with only cpu_type matches any speed or family');
+ok(!MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'cpu', cpu_type => 'intel' } ] },
+    { cpu_type => 'powerpc', cpu_family => 'g5', cpu_64bit => 0, cpu_frequency_mhz => 2000 },
+), 'cpu condition rejects a different cpu_type');
+ok(MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'cpu', cpu_type => 'powerpc', cpu_family => 'g4', min_frequency_mhz => 867 } ] },
+    { cpu_type => 'powerpc', cpu_family => 'g4', cpu_64bit => 0, cpu_frequency_mhz => 867 },
+), 'cpu condition min_frequency_mhz matches at the exact boundary');
+ok(!MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'cpu', cpu_type => 'powerpc', cpu_family => 'g4', min_frequency_mhz => 867 } ] },
+    { cpu_type => 'powerpc', cpu_family => 'g4', cpu_64bit => 0, cpu_frequency_mhz => 800 },
+), 'cpu condition rejects below min_frequency_mhz');
+ok(MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'cpu', cpu_type => 'powerpc', cpu_family => 'g5' } ] },
+    { cpu_type => 'powerpc', cpu_family => 'g5', cpu_64bit => 0, cpu_frequency_mhz => 2000 },
+), 'cpu condition with no min_frequency_mhz matches any speed for that family');
+ok(MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'cpu', cpu_type => 'intel', cpu_64bit => 1 } ] },
+    { cpu_type => 'intel', cpu_family => '', cpu_64bit => 1, cpu_frequency_mhz => 2000 },
+), 'cpu condition cpu_64bit matches a 64-bit-capable snapshot');
+ok(!MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'cpu', cpu_type => 'intel', cpu_64bit => 1 } ] },
+    { cpu_type => 'intel', cpu_family => '', cpu_64bit => 0, cpu_frequency_mhz => 2000 },
+), 'cpu condition cpu_64bit rejects a 32-bit-only snapshot');
+
+ok(MunkiPerls::Upgrade::_physical_supported(
+    {
+        allow => [
+            { type => 'model', values => { 'MacPro5,1' => 1 } },
+            { all => [
+                { type => 'model', values => { 'Mac16,7' => 1 } },
+                { type => 'cpu', cpu_type => 'intel' },
+            ] },
+        ],
+    },
+    { model => 'MacPro5,1', cpu_type => 'powerpc' },
+), 'allow list OR: matches via the first entry even though the second would fail');
+ok(MunkiPerls::Upgrade::_physical_supported(
+    {
+        allow => [
+            { type => 'model', values => { 'MacPro5,1' => 1 } },
+            { all => [
+                { type => 'model', values => { 'Mac16,7' => 1 } },
+                { type => 'cpu', cpu_type => 'intel' },
+            ] },
+        ],
+    },
+    { model => 'Mac16,7', cpu_type => 'intel' },
+), 'allow list OR: matches via the second (all-composite) entry even though the first would fail');
+ok(!MunkiPerls::Upgrade::_physical_supported(
+    {
+        allow => [
+            { all => [
+                { type => 'model', values => { 'Mac16,7' => 1 } },
+                { type => 'cpu', cpu_type => 'intel' },
+            ] },
+        ],
+    },
+    { model => 'Mac16,7', cpu_type => 'powerpc' },
+), 'all composite: model matches but cpu does not, so the whole condition fails');
+
+my $survived = eval {
+    MunkiPerls::Upgrade::_physical_supported(
+        { allow => [ { type => 'nonsense' } ] },
+        {},
+    );
+    1;
+};
+ok($survived, 'unknown condition type does not crash the process');
+
 sub perls {
     my (%overrides) = @_;
     return evaluate_upgrade_perls({
