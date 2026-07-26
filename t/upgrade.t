@@ -281,7 +281,30 @@ my $arm_snapshot = collect_hardware_snapshot(
 );
 is($arm_snapshot->{cpu_type}, 'arm', 'cpu_type maps CPU_TYPE_ARM64 to arm');
 
-is(scalar(keys %{perls()}), 10, 'consolidated evaluator emits ten upgrade perls');
+ok(!defined(evaluate_upgrade_perl('sierra_upgrade_supported', { version => '10.12', is_virtual => 1 })),
+    'a release already at its own target returns undef, not false');
+ok(!defined(evaluate_upgrade_perl('sierra_upgrade_supported', { version => '10.13', is_virtual => 1 })),
+    'a release already past its target returns undef, not false');
+is(evaluate_upgrade_perl('sierra_upgrade_supported', { version => '10.6', is_virtual => 1 }), 0,
+    'a release below minimum_from_version still returns explicit false, not undef');
+is(evaluate_upgrade_perl('sierra_upgrade_supported', {
+    version => '10.11.6', model => 'MacBookPro9,1',
+}), 1, 'an eligible release still returns explicit true');
+
+my $old_os_perls = perls(version => '10.6');
+ok(exists $old_os_perls->{sierra_upgrade_supported}, 'an old OS still gets the sierra key (below every target)');
+ok(exists $old_os_perls->{goldengate_upgrade_supported}, 'an old OS still gets the goldengate key too');
+
+my $new_os_perls = perls(version => '27');
+ok(!exists $new_os_perls->{sierra_upgrade_supported}, 'a bleeding-edge OS omits sierra (already long past)');
+ok(!exists $new_os_perls->{goldengate_upgrade_supported}, 'a bleeding-edge OS omits goldengate too (already at it)');
+is(scalar(keys %{$new_os_perls}), 0, 'a bleeding-edge OS gets zero upgrade_supported keys at all');
+
+ok(perls(
+    version => '10.11.6', model => 'MacBookPro9,1', ram_mb => 1,
+)->{sierra_upgrade_supported}, 'sanity: minimum_ram_mb does not affect a release that does not declare one (sierra ignores an absurdly low ram_mb)');
+
+is(scalar(keys %{perls(version => '10.6')}), 10, 'consolidated evaluator emits all ten upgrade perls for an OS below every target');
 
 for my $snapshot (
     {

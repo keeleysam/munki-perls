@@ -627,20 +627,33 @@ sub evaluate_upgrade_perl {
     }
     die "Unknown upgrade perl: $key\n" unless $wanted;
 
-    my $at_target = version_compare(
-        $snapshot->{version}, $wanted->{version}
-    );
+    my $at_target = version_compare($snapshot->{version}, $wanted->{version});
+    # Being there already is not, strictly speaking, an upgrade path -
+    # and it's not useful information either, so it's reported as undef
+    # (omitted by evaluate_upgrade_perls) rather than as false.
+    return undef unless defined $at_target;
+    return undef if $at_target >= 0;
+
     # minimum_from_version is optional: a release with none imposes no
     # lower bound (any source version below the target is eligible).
-    my $at_minimum = defined($wanted->{minimum_from_version})
-        ? version_compare($snapshot->{version}, $wanted->{minimum_from_version})
-        : 0;
+    # Being below the minimum IS useful information ("you can't jump
+    # straight from Tiger to El Capitan"), so it's reported as explicit
+    # false rather than omitted.
+    if (defined $wanted->{minimum_from_version}) {
+        my $at_minimum = version_compare($snapshot->{version}, $wanted->{minimum_from_version});
+        return 0 if !defined($at_minimum) || $at_minimum < 0;
+    }
 
-    # Being there already is not, strictly speaking, an upgrade path.
-    return 0 if !defined($at_target) || !defined($at_minimum);
-    return 0 if $at_target >= 0;
-    return 0 if $at_minimum < 0;
     return 1 if $snapshot->{is_virtual};
+
+    # minimum_ram_mb is checked after the is_virtual short-circuit above
+    # (unlike minimum_from_version, checked before it): the version floor
+    # is an upgrade-path property that still constrains a VM, while the
+    # RAM floor is a physical-hardware property a VM doesn't share.
+    if (defined $wanted->{minimum_ram_mb}) {
+        return 0 if ($snapshot->{ram_mb} || 0) < $wanted->{minimum_ram_mb};
+    }
+
     return _physical_supported($wanted, $snapshot);
 }
 
@@ -651,7 +664,8 @@ sub evaluate_upgrade_perls {
     my %perls;
     for my $release (@RELEASES) {
         my $key = $release->{name} . '_upgrade_supported';
-        $perls{$key} = evaluate_upgrade_perl($key, $snapshot);
+        my $result = evaluate_upgrade_perl($key, $snapshot);
+        $perls{$key} = $result if defined $result;
     }
     return \%perls;
 }
