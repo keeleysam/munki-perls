@@ -111,8 +111,12 @@ sub perls {
     return evaluate_upgrade_perls({
         version => '10.13.6',
         model => 'MacBookPro9,1',
-        board_id => 'Mac-06F11F11946D27C5',
         hardware_target => '',
+        cpu_type => 'intel',
+        cpu_family => '',
+        cpu_64bit => 1,
+        cpu_frequency_mhz => 2000,
+        ram_mb => 8192,
         is_virtual => 0,
         %overrides,
     });
@@ -121,28 +125,27 @@ sub perls {
 is(version_compare('10.15.7', '11'), -1, '10.15 sorts below 11');
 is(version_compare('26.0', '16'), 1, 'Tahoe major 26 is not treated as 16');
 
-ok(perls(version => '10.7')->{sierra_upgrade_supported}, 'Sierra lower boundary supported');
+ok(perls(version => '10.7.5')->{sierra_upgrade_supported}, 'Sierra lower boundary supported');
 ok(perls(version => '10.11.6')->{sierra_upgrade_supported}, 'Sierra upper source boundary supported');
 ok(!perls(version => '10.6.8', is_virtual => 1)->{sierra_upgrade_supported}, 'Sierra rejects below minimum before VM');
 ok(!perls(version => '10.12', is_virtual => 1)->{sierra_upgrade_supported}, 'Sierra rejects already-upgraded VM');
 ok(!perls(version => '10.13')->{sierra_upgrade_supported}, 'Sierra rejects systems above target');
 ok(perls(
-    version => '10.11.6', model => 'unsupported',
-    board_id => 'unsupported', is_virtual => 1,
+    version => '10.11.6', model => 'unsupported', is_virtual => 1,
 )->{sierra_upgrade_supported}, 'Sierra permits an eligible VM');
 ok(!perls(model => 'MacBookPro5,1')->{sierra_upgrade_supported}, 'Sierra rejects original blocked model');
-ok(!perls(board_id => 'unsupported')->{sierra_upgrade_supported}, 'Sierra requires original board table');
+ok(!perls(model => 'unsupported')->{sierra_upgrade_supported}, 'Sierra requires a supported model');
 ok(perls(
-    version => '10.11.6', model => 'MacBookPro9,1',
-    board_id => 'Mac-4B7AC7E43945597E',
-)->{sierra_upgrade_supported}, 'Sierra accepts supported model and board combination');
+    version => '10.11.6', model => 'iMac14,1',
+)->{sierra_upgrade_supported}, 'Sierra accepts a second real supported model');
 
-ok(perls(version => '10.7')->{mojave_upgrade_supported}, 'Mojave lower boundary supported');
+ok(perls(version => '10.8')->{mojave_upgrade_supported}, 'Mojave lower boundary supported');
 ok(perls(version => '10.13.6')->{mojave_upgrade_supported}, 'Mojave upper source boundary supported');
 ok(!perls(version => '10.6.8', is_virtual => 1)->{mojave_upgrade_supported}, 'Mojave rejects below minimum before VM');
 ok(!perls(version => '10.14', is_virtual => 1)->{mojave_upgrade_supported}, 'Mojave rejects already-upgraded VM');
 ok(!perls(model => 'MacBookPro8,2')->{mojave_upgrade_supported}, 'Mojave rejects original blocked model');
-ok(!perls(board_id => 'unsupported')->{mojave_upgrade_supported}, 'Mojave requires original board table');
+ok(!perls(model => 'unsupported')->{mojave_upgrade_supported}, 'Mojave requires a supported model');
+ok(perls(model => 'MacPro5,1')->{mojave_upgrade_supported}, 'Mojave still allows MacPro5,1 (GPU caveat not modeled yet)');
 
 ok(!perls(version => '10.8.5', is_virtual => 1)->{catalina_upgrade_supported}, 'Catalina rejects below minimum before VM');
 ok(perls(version => '10.9', is_virtual => 1)->{catalina_upgrade_supported}, 'Catalina lower boundary VM supported');
@@ -152,6 +155,9 @@ ok(!perls(version => '10.14', model => 'MacPro5,1')->{catalina_upgrade_supported
 
 ok(perls(version => '10.15', model => 'MacBook8,1')->{bigsur_upgrade_supported}, 'Big Sur supported model retained');
 ok(!perls(version => '11', is_virtual => 1)->{bigsur_upgrade_supported}, 'Big Sur rejects already-upgraded VM');
+ok(perls(version => '10.15', model => 'MacBookAir9,1')->{bigsur_upgrade_supported}, 'Big Sur includes the newly-added MacBookAir9,1 gap fix');
+ok(perls(version => '10.15', model => 'MacBookPro16,2')->{bigsur_upgrade_supported}, 'Big Sur includes the newly-added MacBookPro16,2 gap fix');
+ok(perls(version => '10.15', model => 'iMac20,1')->{bigsur_upgrade_supported}, 'Big Sur includes the newly-added iMac20,1 gap fix');
 ok(perls(version => '11', model => 'iMacPro1,1')->{monterey_upgrade_supported}, 'Monterey includes iMacPro1,1');
 
 ok(perls(version => '14', model => 'MacBookPro16,3')->{sequoia_upgrade_supported}, 'Sequoia retains MacBookPro16,3');
@@ -279,17 +285,19 @@ is(scalar(keys %{perls()}), 10, 'consolidated evaluator emits ten upgrade perls'
 
 for my $snapshot (
     {
-        version => '10.13.6', model => 'MacBookPro9,1',
-        board_id => 'Mac-06F11F11946D27C5', hardware_target => '',
-        is_virtual => 0,
+        version => '10.13.6', model => 'MacBookPro9,1', hardware_target => '',
+        cpu_type => 'intel', cpu_family => '', cpu_64bit => 1,
+        cpu_frequency_mhz => 2000, ram_mb => 8192, is_virtual => 0,
     },
     {
-        version => '14', model => 'unsupported', board_id => 'unsupported',
-        hardware_target => 'unsupported', is_virtual => 1,
+        version => '14', model => 'unsupported', hardware_target => 'unsupported',
+        cpu_type => 'intel', cpu_family => '', cpu_64bit => 1,
+        cpu_frequency_mhz => 2000, ram_mb => 8192, is_virtual => 1,
     },
     {
-        version => '26', model => 'MacBookPro16,4', board_id => '',
-        hardware_target => 'J180dAP', is_virtual => 0,
+        version => '26', model => 'MacBookPro16,4', hardware_target => 'J180dAP',
+        cpu_type => 'arm', cpu_family => '', cpu_64bit => 1,
+        cpu_frequency_mhz => 0, ram_mb => 16384, is_virtual => 0,
     },
 ) {
     my $aggregate = evaluate_upgrade_perls($snapshot);
