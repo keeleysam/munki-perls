@@ -5,7 +5,8 @@ use POSIX qw(strftime);
 use Scalar::Util qw(blessed);
 use Foundation;
 use MunkiPerls qw(
-    objc_string parse_plist_output perl_integer perl_string run_command
+    objc_string parse_plist_output perl_integer perl_string
+    system_profiler_snapshot
 );
 
 sub _valid_object {
@@ -128,10 +129,7 @@ sub mdm_install {
     } elsif ($options{profile_probe}) {
         ($ok, $output) = $options{profile_probe}->();
     } else {
-        ($ok, $output) = run_command(
-            {}, '/usr/sbin/system_profiler', '-xml',
-            'SPConfigurationProfileDataType'
-        );
+        ($ok, $output) = system_profiler_snapshot();
     }
     return ('', 0) unless $ok;
     my $plist = parse_plist_output($output);

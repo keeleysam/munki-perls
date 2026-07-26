@@ -4,7 +4,7 @@ use warnings;
 use Scalar::Util qw(blessed);
 use Foundation;
 use MunkiPerls qw(
-    perl_string objc_string parse_plist_output run_command
+    perl_string objc_string parse_plist_output system_profiler_snapshot
 );
 use MunkiPerls::Upgrade qw(cached_hardware_snapshot);
 
@@ -74,10 +74,7 @@ sub virtual_type {
     } elsif (defined $options{profiler_output}) {
         ($ok, $output) = (1, $options{profiler_output});
     } else {
-        ($ok, $output) = run_command(
-            {}, '/usr/sbin/system_profiler', '-xml',
-            'SPEthernetDataType', 'SPHardwareDataType'
-        );
+        ($ok, $output) = system_profiler_snapshot();
     }
     return $ok ? _virtual_machine_type($output) : 'unknown';
 }

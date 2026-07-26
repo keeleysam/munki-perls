@@ -5,6 +5,7 @@ use Scalar::Util qw(blessed);
 use Foundation;
 use MunkiPerls qw(
     perl_string objc_string parse_plist_output run_command
+    system_profiler_snapshot
 );
 
 sub _managed_uuid_in_object {
@@ -50,10 +51,7 @@ sub mdm_managed_user {
     if (defined $options{profile_output}) {
         ($ok, $output) = (1, $options{profile_output});
     } else {
-        ($ok, $output) = run_command(
-            {}, '/usr/sbin/system_profiler', '-xml',
-            'SPConfigurationProfileDataType'
-        );
+        ($ok, $output) = system_profiler_snapshot();
     }
     return 'NONE' unless $ok;
     my $plist = parse_plist_output($output);
