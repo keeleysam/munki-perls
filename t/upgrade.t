@@ -6,7 +6,7 @@ use Test::More 'no_plan';
 use lib 'conditions/lib';
 use MunkiPerls::Upgrade qw(
     collect_hardware_snapshot evaluate_upgrade_perl evaluate_upgrade_perls
-    version_compare
+    highest_supported_macos_version latest_macos_supported version_compare
 );
 
 # Exercised directly against _physical_supported via a synthetic release,
@@ -340,3 +340,25 @@ my $unknown = eval {
     1;
 };
 ok(!$unknown, 'single-perl evaluator rejects unknown keys');
+
+ok(latest_macos_supported({ version => '27', hardware_target => 'J180dAP', is_virtual => 0 }),
+    'a machine matching the newest release is latest-supported');
+ok(!latest_macos_supported({ version => '27', model => 'unsupported', hardware_target => 'unsupported', is_virtual => 0 }),
+    'a machine matching nothing in the newest release is not latest-supported');
+ok(latest_macos_supported({ version => '10.4.11', is_virtual => 1 }),
+    'a VM is always latest-supported regardless of current OS version');
+
+is(highest_supported_macos_version({ model => 'MacBookPro9,1', is_virtual => 0 }), '10.15',
+    'a machine eligible up through Catalina (but not Big Sur) reports 10.15 as its ceiling');
+is(highest_supported_macos_version({ hardware_target => 'J180dAP', is_virtual => 0 }), '27',
+    'a machine matching the newest release reports its version as the ceiling');
+is(highest_supported_macos_version({ model => 'unsupported', hardware_target => 'unsupported', is_virtual => 0 }), '',
+    'a machine matching nothing at all reports an empty ceiling');
+is(highest_supported_macos_version({ is_virtual => 1 }), '27',
+    'a VM reports the newest release as its ceiling regardless of current OS version');
+
+my $goldengate_beta = { version => '27', hardware_target => 'J180dAP', is_virtual => 0 };
+ok(!exists evaluate_upgrade_perls($goldengate_beta)->{goldengate_upgrade_supported},
+    'a machine already on the newest release gets no per-release keys');
+ok(latest_macos_supported($goldengate_beta), 'but latest_macos_supported still reports true for it');
+is(highest_supported_macos_version($goldengate_beta), '27', 'and highest_supported_macos_version still reports its real ceiling');

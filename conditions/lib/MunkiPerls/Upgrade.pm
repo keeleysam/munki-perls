@@ -17,7 +17,8 @@ use MunkiPerls qw(
 our @EXPORT_OK = qw(
     cached_hardware_snapshot collect_hardware_snapshot
     evaluate_upgrade_perl evaluate_upgrade_perls
-    is_version_at_least version_compare
+    highest_supported_macos_version is_version_at_least latest_macos_supported
+    version_compare
 );
 
 use constant HARDWARE_CACHE_SCHEMA_VERSION => 1;
@@ -668,6 +669,49 @@ sub evaluate_upgrade_perls {
         $perls{$key} = $result if defined $result;
     }
     return \%perls;
+}
+
+# Shared by _highest_version_release (over every release) and
+# highest_supported_macos_version (over just the releases this hardware
+# matches): both want "the highest-version release in this list," they
+# just start from different lists.
+sub _max_by_version {
+    my (@releases) = @_;
+    my $highest;
+    for my $release (@releases) {
+        $highest = $release
+            if !$highest || version_compare($release->{version}, $highest->{version}) > 0;
+    }
+    return $highest;
+}
+
+sub _highest_version_release {
+    return _max_by_version(@RELEASES);
+}
+
+# latest_macos_supported and highest_supported_macos_version are deliberately
+# hardware-capability-only (via _physical_supported) and never consult
+# minimum_ram_mb, so a low-RAM match can overstate the ceiling versus what
+# evaluate_upgrade_perl reports for that specific, RAM-gated release.
+sub latest_macos_supported {
+    my ($snapshot) = @_;
+    die "Hardware snapshot must be a hash reference\n"
+        unless ref($snapshot) eq 'HASH';
+    return 1 if $snapshot->{is_virtual};
+    my $release = _highest_version_release();
+    return 0 unless $release;
+    return _physical_supported($release, $snapshot) ? 1 : 0;
+}
+
+sub highest_supported_macos_version {
+    my ($snapshot) = @_;
+    die "Hardware snapshot must be a hash reference\n"
+        unless ref($snapshot) eq 'HASH';
+    my @matching = grep {
+        $snapshot->{is_virtual} || _physical_supported($_, $snapshot)
+    } @RELEASES;
+    my $highest = _max_by_version(@matching);
+    return $highest ? $highest->{version} : '';
 }
 
 1;

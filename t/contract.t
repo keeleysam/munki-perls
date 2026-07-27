@@ -44,8 +44,8 @@ my %arrays = map { $_ => 1 } qw(
 );
 my %strings = map { $_ => 1 } qw(
     client_id console_user crashplan_username filevault_status
-    gatekeeper_status mdm_install_date mdm_managed_user
-    physical_or_virtual sip_status virtual_type
+    gatekeeper_status highest_supported_macos_version mdm_install_date
+    mdm_managed_user physical_or_virtual sip_status virtual_type
 );
 my %integers = map { $_ => 1 } qw(
     mdm_hours_since_install shard
@@ -62,6 +62,8 @@ my @bundled_keys = sort qw(
     crashplan_username
     filevault_status
     gatekeeper_status
+    highest_supported_macos_version
+    latest_macos_supported
     local_user_dirs
     mdm_hours_since_install
     mdm_install_date
