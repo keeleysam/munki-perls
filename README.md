@@ -6,7 +6,8 @@
 
 <p align="center">
   <strong>Typed Munki perls for Macs from Tiger onward.</strong><br>
-  Drop-in plugins, native plist values, and no additional runtime to explain.
+  Drop-in plugins, native plist values, and no additional runtime to explain.<br>
+  From G3 to M3, from G5 to M5, with Intel holding the middle: it's all supported.
 </p>
 
 <p align="center">
@@ -33,11 +34,12 @@ a Perl 5.8.6-compatible collection of Munki
 [admin-provided conditions](https://github.com/munki/munki/wiki/Conditional-Items),
 using only the `Foundation` and `PerlObjCBridge` modules Apple shipped with OS X.
 It runs on fully patched Mac OS X 10.4.11 Tiger and 10.5.8 Leopard on Intel
-and PowerPC, verified on real G5 hardware, plus later OS X and macOS releases
-on the architectures they support, without installing Python, a package
-manager, or a small ecosystem in order to write one property list. Leopard
-package installation still hasn't been smoke-tested end to end; see
-[Testing](#testing) for the validation boundary.
+and PowerPC, verified on real G5 hardware, all the way through the current
+release on the latest Apple Silicon, without installing Python, a package
+manager, or a small ecosystem in order to write one property list. PowerPC,
+Intel, or Apple Silicon: if Apple shipped a Perl on it, munki-perls runs on
+it. Leopard package installation still hasn't been smoke-tested end to end;
+see [Testing](#testing) for the validation boundary.
 
 The result is deliberately plain: native plist values, serialized updates, a
 strict subprocess allowlist for bundled collectors, and perls that keep their
@@ -48,7 +50,7 @@ implementation need not be an event.
 
 | | |
 | --- | --- |
-| **Compatibility** | Mac OS X 10.4.11 Tiger and 10.5.8 Leopard on Intel and PowerPC (verified on real G5 hardware), plus later releases; Perl 5.8.6 |
+| **Compatibility** | PowerPC (Tiger/Leopard, verified on real G5 hardware) through Intel through Apple Silicon, on every OS X and macOS release in between; Perl 5.8.6 |
 | **Contract** | Drop-in `perls()` plugins returning typed key/value maps |
 | **Output** | Munki's configured `ManagedInstallDir/ConditionalItems.plist` |
 | **Dependencies** | Apple's stock Perl, `Foundation`, and `PerlObjCBridge` |
