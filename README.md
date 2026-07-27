@@ -5,7 +5,7 @@
 <h1 align="center">munki-perls</h1>
 
 <p align="center">
-  <strong>Typed Munki perls for Macs from Leopard onward.</strong><br>
+  <strong>Typed Munki perls for Macs from Tiger onward.</strong><br>
   Drop-in plugins, native plist values, and no additional runtime to explain.
 </p>
 
@@ -29,14 +29,14 @@ what sort of virtual machine has appeared in inventory this morning.
 
 [`munki-facts`](https://github.com/munki/munki-facts) established a useful
 vocabulary for those answers. `munki-perls` carries that vocabulary forward as
-a Perl 5.8.8-compatible collection of Munki
+a Perl 5.8.6-compatible collection of Munki
 [admin-provided conditions](https://github.com/munki/munki/wiki/Conditional-Items),
 using only the `Foundation` and `PerlObjCBridge` modules Apple shipped with OS X.
-It provisionally supports fully patched Mac OS X 10.5.8 Leopard on Intel and
-PowerPC, plus later OS X and macOS releases on the architectures they support,
-without installing Python, a package manager, or a small ecosystem in order to
-write one property list. Leopard installation and full runtime smoke testing
-remain pending; see
+It runs on fully patched Mac OS X 10.4.11 Tiger and 10.5.8 Leopard on Intel
+and PowerPC, verified on real G5 hardware, plus later OS X and macOS releases
+on the architectures they support, without installing Python, a package
+manager, or a small ecosystem in order to write one property list. Leopard
+package installation still hasn't been smoke-tested end to end; see
 [Testing](#testing) for the validation boundary.
 
 The result is deliberately plain: native plist values, serialized updates, a
@@ -48,7 +48,7 @@ implementation need not be an event.
 
 | | |
 | --- | --- |
-| **Compatibility** | Provisionally Mac OS X 10.5.8 on Intel and PowerPC, plus later releases; Perl 5.8.8 |
+| **Compatibility** | Mac OS X 10.4.11 Tiger and 10.5.8 Leopard on Intel and PowerPC (verified on real G5 hardware), plus later releases; Perl 5.8.6 |
 | **Contract** | Drop-in `perls()` plugins returning typed key/value maps |
 | **Output** | Munki's configured `ManagedInstallDir/ConditionalItems.plist` |
 | **Dependencies** | Apple's stock Perl, `Foundation`, and `PerlObjCBridge` |
@@ -65,7 +65,7 @@ adding an answer does not create a new dialect of “true.”
 | **People and sessions** | admin users, console user and login state, local home directories, CrashPlan username |
 | **Security and management** | FileVault, Gatekeeper, SIP, Back to My Mac, managed user, MDM profile install age, enabled and approved system extensions |
 | **Hardware** | physical or virtual, virtual-machine vendor, stable shard |
-| **Upgrade paths** | Sierra through Goldengate, evaluated against OS version and Apple hardware identifiers |
+| **Upgrade paths** | Leopard through Goldengate, evaluated against OS version and Apple hardware identifiers (model, board, or CPU family and speed), plus two always-present hardware-ceiling perls |
 
 ### Bundled perl contract
 
@@ -87,25 +87,34 @@ plugins provide the following keys and native plist types.
 | `console_user` | string |
 | `console_user_logged_in` | boolean |
 | `crashplan_username` | string |
+| `elcapitan_upgrade_supported` | boolean |
 | `filevault_status` | string |
 | `gatekeeper_status` | string |
 | `goldengate_upgrade_supported` | boolean |
+| `highest_supported_macos_version` | string: the highest release version this hardware can ever reach, ignoring the current OS version and any RAM minimum |
+| `latest_macos_supported` | boolean: whether this hardware can reach the newest release at all, ignoring the current OS version and any RAM minimum |
+| `leopard_upgrade_supported` | boolean |
+| `lion_upgrade_supported` | boolean |
 | `local_user_dirs` | array of strings |
+| `mavericks_upgrade_supported` | boolean |
 | `mdm_hours_since_install` | integer |
 | `mdm_install_date` | string: UTC ISO 8601 timestamp, or empty when unavailable |
 | `mdm_managed_user` | string |
 | `mojave_upgrade_supported` | boolean |
 | `monterey_upgrade_supported` | boolean |
+| `mountainlion_upgrade_supported` | boolean |
 | `physical_or_virtual` | string: `physical` or `virtual` |
 | `sequoia_upgrade_supported` | boolean |
 | `shard` | integer: stable value from 1 through 100, or 99 when no hardware identifier is available |
 | `sierra_upgrade_supported` | boolean |
 | `sip_status` | string |
+| `snowleopard_upgrade_supported` | boolean |
 | `sonoma_upgrade_supported` | boolean |
 | `system_extensions` | array of currently enabled system-extension bundle identifiers |
 | `tahoe_upgrade_supported` | boolean |
 | `ventura_upgrade_supported` | boolean |
 | `virtual_type` | string: empty on physical Macs; `vmware`, `virtualbox`, `parallels`, or `unknown` on virtual Macs |
+| `yosemite_upgrade_supported` | boolean |
 
 `virtual_type` identifies recognized virtual-machine vendors without replacing
 Munki's built-in `machine_type` condition. It is an empty string on physical
@@ -121,6 +130,17 @@ bundle ID, team ID, and combined `TEAMID:bundle.id` keys.
 platform UUID and then to `99`. It is calculated as `MD5(identifier) % 100 + 1`
 so it is stable across reinstalls without relying on a site-specific persisted
 data source.
+
+Each `*_upgrade_supported` perl is omitted entirely, rather than reported
+`false`, once a Mac is already at or past that release: being there already
+is not an upgrade path, and seventeen redundant `false` values are not
+useful information either. Falling below a release's minimum source version
+is still reported as explicit `false`, since that is worth knowing.
+`latest_macos_supported` and `highest_supported_macos_version` are the two
+exceptions to the omit-when-obvious rule: they are always present, evaluate
+hardware capability only, and ignore both the current OS version and any RAM
+minimum, so a Mac already past every per-release target still gets a
+straight answer instead of a blank stare.
 
 The included collection stays focused on broadly useful inventory and
 compatibility answers. Site-specific and community additions can be dropped
@@ -237,7 +257,7 @@ A plugin is an ordinary, non-executable Perl file with a `perls()` function.
 It may return one key or a related group of keys:
 
 ```perl
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 use MunkiPerls qw(
@@ -279,21 +299,33 @@ bare scalar members are treated as strings.
 
 ## Upgrade compatibility
 
-Each upgrade plugin emits one boolean perl. The upgrade plugins share a
-reboot-scoped hardware snapshot and evaluate their named result in the same
-order:
+Each upgrade plugin emits one boolean perl, evaluated against a single
+allow-list schema shared by all seventeen releases. Every release declares an
+`allow` list of conditions (a `model`, a `hardware_target`, or a `cpu` family
+and minimum clock speed, optionally combined with `all` for AND semantics),
+and a Mac is eligible if it matches at least one of them. The upgrade plugins
+share a reboot-scoped hardware snapshot and evaluate their named result in
+the same order:
 
-1. A Mac already at or above the target is not eligible.
+1. A Mac already at or above the target omits that release's perl instead of
+   reporting `false`.
 2. A Mac below the release's minimum source version is not eligible.
-3. An eligible virtual machine is supported.
-4. A physical Mac must match the release's model, board, or hardware-target
-   tables.
+3. An eligible virtual machine is supported, regardless of any RAM minimum.
+4. A physical Mac must clear the release's RAM minimum, if it declares one,
+   then match one of its allowed conditions.
 
 | Perl | Target | Eligible source versions |
 | --- | ---: | --- |
-| `sierra_upgrade_supported` | 10.12 | 10.7–10.11 |
-| `mojave_upgrade_supported` | 10.14 | 10.7–10.13 |
-| `catalina_upgrade_supported` | 10.15 | 10.9–10.14 |
+| `leopard_upgrade_supported` | 10.5 | no declared minimum, any earlier release |
+| `snowleopard_upgrade_supported` | 10.6 | 10.5.8 through the release below 10.6 |
+| `lion_upgrade_supported` | 10.7 | 10.6.8 through the release below 10.7 |
+| `mountainlion_upgrade_supported` | 10.8 | 10.6.6 through the release below 10.8 |
+| `mavericks_upgrade_supported` | 10.9 | 10.6.6 through the release below 10.9 |
+| `yosemite_upgrade_supported` | 10.10 | 10.6.6 through the release below 10.10 |
+| `elcapitan_upgrade_supported` | 10.11 | 10.6.8 through the release below 10.11 |
+| `sierra_upgrade_supported` | 10.12 | 10.7.5 through the release below 10.12 |
+| `mojave_upgrade_supported` | 10.14 | 10.8 through the release below 10.14 |
+| `catalina_upgrade_supported` | 10.15 | 10.9 through the release below 10.15 |
 | `bigsur_upgrade_supported` | 11 | 10.7 through the release below 11 |
 | `monterey_upgrade_supported` | 12 | 10.7 through the release below 12 |
 | `ventura_upgrade_supported` | 13 | 10.7 through the release below 13 |
@@ -302,14 +334,28 @@ order:
 | `tahoe_upgrade_supported` | 26 | 10.7 through the release below 26 |
 | `goldengate_upgrade_supported` | 27 | 10.7 through the release below 27 |
 
-Leopard runtime support does not change upgrade eligibility. These perls retain
-their existing minimum source versions: 10.7 for every row shown as 10.7 and
-10.9 for Catalina.
+Mountain Lion, Mavericks, Yosemite, and El Capitan additionally require 2GB
+of RAM on physical hardware; that minimum is ignored for virtual machines.
+
+Leopard, Snow Leopard, and Lion predate Apple's board-id compatibility check
+entirely, so their eligibility comes from CPU family and clock speed instead
+of a model or board table: Leopard needs PowerPC G4 at 867MHz or faster, any
+G5, or any Intel Mac; Snow Leopard needs any Intel Mac; Lion needs a
+64-bit-capable Intel Mac, which rules out the original 32-bit-only Core Duo
+and Core Solo machines.
 
 Sierra uses the final model and board tables from the parent of
 [`munki-facts` removal commit `bbeee28dd2a5`](https://github.com/munki/munki-facts/commit/bbeee28dd2a5).
-The remaining hardware tables continue the lineage at
-[`a22a02a0304a`](https://github.com/munki/munki-facts/commit/a22a02a0304a).
+Mojave, Catalina, Big Sur, and later continue the lineage at
+[`a22a02a0304a`](https://github.com/munki/munki-facts/commit/a22a02a0304a). Mountain
+Lion, Mavericks, Yosemite, and El Capitan predate that lineage's board-id
+records, so their model lists were instead translated from
+[`hjuutilainen/adminscripts`](https://github.com/hjuutilainen/adminscripts)'
+real board-id compatibility checks via
+[`littlebyteorg/appledb`](https://github.com/littlebyteorg/appledb)'s device
+database, which maps board ids to Model Identifiers. This repository no
+longer stores or reports a Mac's board id itself; only the release tables
+above needed it, once, at data-entry time.
 
 ## How it stays boring
 
@@ -332,6 +378,10 @@ The remaining hardware tables continue the lineage at
   `virtual_type.pl` plugin makes the vendor-specific `system_profiler` query,
   and only for virtual Macs, to distinguish VMware, VirtualBox, Parallels, and
   the entirely respectable `unknown`.
+- Hardware identity comes from `system_profiler` model lookups and, for the
+  CPU-gated releases, family and clock speed pulled from `sysctl`. Nothing
+  shells out to `ioreg -a` anymore, which is convenient, because it never
+  worked on Tiger's `ioreg` in the first place.
 
 Back to My Mac is queried through `scutil` only on Mojave and older and is
 always false on Catalina and newer, which settled that question rather neatly.
@@ -354,11 +404,12 @@ Foundation, validates and deduplicates `SupportedDeviceModels`, and prints a
 sorted Perl `qw(...)` table.
 
 `tools/build-pkg.pl` stages the payload with native Perl file APIs and invokes
-only `/usr/bin/pkgbuild`. The tool is Perl 5.8.8-compatible, but packages must
-be built on a newer host that provides `pkgbuild`; Leopard is a supported
-installation target, not a package build host. By default it creates an unsigned package with identifier
-`com.github.weswhet.munki-perls`, installed at
-`/usr/local/munki/conditions`:
+only `/usr/bin/pkgbuild`. The tool is Perl 5.8.6-compatible, but packages must
+be built on a newer host that provides `pkgbuild`; Tiger and Leopard are
+supported installation targets, not package build hosts, and asking a G5 to
+run `pkgbuild` would be a poor use of everyone's afternoon. By default it
+creates an unsigned package with identifier `com.github.weswhet.munki-perls`,
+installed at `/usr/local/munki/conditions`:
 
 ```sh
 tools/build-pkg.pl --verbose
@@ -368,10 +419,10 @@ tools/build-pkg.pl --version 0.1.42 \
   --output /tmp/munki-perls-0.1.42.pkg
 ```
 
-After both CI architectures pass, every push to `main` uses the workflow run
-number to build version `0.1.N`, creates tag `v0.1.N`, and publishes the package
-on a GitHub Release. Re-running the workflow replaces the existing asset rather
-than attempting to improve arithmetic.
+After all three Perl-version jobs pass, every push to `main` uses the
+workflow run number to build version `0.1.N`, creates tag `v0.1.N`, and
+publishes the package on a GitHub Release. Re-running the workflow replaces
+the existing asset rather than attempting to improve arithmetic.
 
 ## Testing
 
@@ -384,23 +435,31 @@ find conditions tools t -type f \
 /usr/bin/prove -lr t
 ```
 
-CI covers every standard GitHub-hosted macOS image: ARM on `macos-14`,
-`macos-15`, and `macos-26`, plus Intel on `macos-15-intel` and
-`macos-26-intel`. Injected OS, hardware, and Foundation plist fixtures exercise
-earlier macOS and virtual-machine branches. A checksum-pinned build of exact
-Perl 5.8.8 compiles every Perl source and test with a compile-only Foundation
-stub, then runs the Foundation-independent syntax, policy, and package tests
-on every image.
-The modern-Perl suite also builds and expands a package, inspects its BOM, and
-verifies the complete native plist contract. Package tests skip on hosts
-without `/usr/bin/pkgbuild`.
+CI runs three Perl versions in parallel, one job per version, across every
+standard GitHub-hosted macOS image: ARM on `macos-14`, `macos-15`, and
+`macos-26`, plus Intel on `macos-15-intel` and `macos-26-intel`.
+`perl-latest` uses each image's own system Perl, currently 5.34.1. `perl-5-8-6`
+and `perl-5-8-8` each install a checksum-pinned build of the exact Perl that
+Tiger and Leopard shipped, respectively, since no GitHub-hosted image is old
+enough to have either lying around.
 
-Leopard validation is still pending. On real or virtual fully patched 10.5.8
-Intel and PowerPC systems, install a package built on a `pkgbuild` host, run all
-installed conditions, verify the native plist types and hardware-cache reuse,
-and run the Foundation-dependent tests. Until that matrix passes, 10.5.8
-support is provisional. Continue smoke-testing later releases as before. A
-successful run is expected to be thoroughly boring. Here, that is a feature.
+Injected OS, hardware, and Foundation plist fixtures exercise earlier macOS
+and virtual-machine branches on `perl-latest`, which also builds and expands
+a package, inspects its BOM, and verifies the complete native plist contract.
+Package tests skip on hosts without `/usr/bin/pkgbuild`. The two historical
+Perl jobs compile every Perl source and test against a compile-only
+Foundation stub, then run the Foundation-independent syntax, policy, and
+package tests, since neither Tiger nor Leopard's real `Foundation` bridge is
+available on a GitHub-hosted runner.
+
+The genuine article has already run once: a real PowerPC G5, tested directly
+rather than through any of the above, running the actual conditions runner
+end to end and correctly reporting `leopard_upgrade_supported=true` for its
+trouble. What CI cannot yet do is install an actual `.pkg` on real or virtual
+Leopard hardware, verify the native plist types and hardware-cache reuse
+there, and run the Foundation-dependent tests against the genuine bridge.
+Continue smoke-testing new releases as before. A successful run is expected
+to be thoroughly boring. Here, that is a feature.
 
 ## Lineage and license
 
