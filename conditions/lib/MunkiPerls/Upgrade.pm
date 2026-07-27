@@ -391,6 +391,31 @@ my @RELEASES = (
             } },
         ],
     },
+    {
+        name => 'leopard',
+        version => '10.5',
+        allow => [
+            { type => 'cpu', cpu_type => 'powerpc', cpu_family => 'g4', min_frequency_mhz => 867 },
+            { type => 'cpu', cpu_type => 'powerpc', cpu_family => 'g5' },
+            { type => 'cpu', cpu_type => 'intel' },
+        ],
+    },
+    {
+        name => 'snowleopard',
+        version => '10.6',
+        minimum_from_version => '10.5.8',
+        allow => [
+            { type => 'cpu', cpu_type => 'intel' },
+        ],
+    },
+    {
+        name => 'lion',
+        version => '10.7',
+        minimum_from_version => '10.6.8',
+        allow => [
+            { type => 'cpu', cpu_type => 'intel', cpu_64bit => 1 },
+        ],
+    },
 );
 
 sub _version_parts {

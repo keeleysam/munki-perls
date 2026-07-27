@@ -317,7 +317,7 @@ ok(perls(
     version => '10.11.6', model => 'MacBookPro9,1', ram_mb => 1,
 )->{sierra_upgrade_supported}, 'sanity: minimum_ram_mb does not affect a release that does not declare one (sierra ignores an absurdly low ram_mb)');
 
-is(scalar(keys %{perls(version => '10.6')}), 14, 'consolidated evaluator now emits fourteen upgrade perls for an OS below every target');
+is(scalar(keys %{perls(version => '10.4')}), 17, 'consolidated evaluator now emits all seventeen upgrade perls for an OS below every target');
 
 for my $snapshot (
     {
@@ -375,3 +375,39 @@ ok(!exists evaluate_upgrade_perls($goldengate_beta)->{goldengate_upgrade_support
     'a machine already on the newest release gets no per-release keys');
 ok(latest_macos_supported($goldengate_beta), 'but latest_macos_supported still reports true for it');
 is(highest_supported_macos_version($goldengate_beta), '27', 'and highest_supported_macos_version still reports its real ceiling');
+
+# These all pin an explicit version below the release's own target (and,
+# where one exists, at/above its minimum_from_version): the shared perls()
+# helper's default version (10.13.6) is already past leopard/snowleopard/
+# lion's targets, which would make evaluate_upgrade_perl return undef
+# (already-upgraded semantics) rather than the boolean these assertions
+# are actually trying to exercise.
+ok(perls(version => '10.4', cpu_type => 'powerpc', cpu_family => 'g4', cpu_frequency_mhz => 867)->{leopard_upgrade_supported},
+    'Leopard accepts a G4 at exactly the 867MHz boundary');
+ok(!perls(version => '10.4', cpu_type => 'powerpc', cpu_family => 'g4', cpu_frequency_mhz => 800)->{leopard_upgrade_supported},
+    'Leopard rejects a G4 below the 867MHz boundary');
+ok(perls(version => '10.4', cpu_type => 'powerpc', cpu_family => 'g5', cpu_frequency_mhz => 1)->{leopard_upgrade_supported},
+    'Leopard accepts any G5 speed at all');
+ok(!perls(version => '10.4', cpu_type => 'powerpc', cpu_family => 'g3', cpu_frequency_mhz => 900)->{leopard_upgrade_supported},
+    'Leopard rejects a G3 regardless of speed');
+ok(perls(version => '10.4', cpu_type => 'intel')->{leopard_upgrade_supported}, 'Leopard accepts any Intel Mac');
+
+ok(perls(version => '10.5.8', cpu_type => 'intel')->{snowleopard_upgrade_supported}, 'Snow Leopard accepts any Intel Mac');
+ok(!perls(version => '10.5.8', cpu_type => 'powerpc', cpu_family => 'g5', cpu_frequency_mhz => 2500)->{snowleopard_upgrade_supported},
+    'Snow Leopard rejects PowerPC entirely, even a fast G5');
+ok(!perls(version => '10.5', cpu_type => 'intel')->{snowleopard_upgrade_supported},
+    'Snow Leopard rejects below its own minimum (10.5.8)');
+
+ok(perls(version => '10.6.8', cpu_type => 'intel', cpu_64bit => 1)->{lion_upgrade_supported}, 'Lion accepts a 64-bit-capable Intel Mac');
+ok(!perls(version => '10.6.8', cpu_type => 'intel', cpu_64bit => 0)->{lion_upgrade_supported},
+    'Lion rejects an original 32-bit-only Core Duo/Solo Intel Mac');
+
+is(scalar(keys %{perls(version => '10.1')}), 17, 'consolidated evaluator now emits all seventeen upgrade perls');
+
+# The real point of this whole branch of work: a real PowerPC G5's actual
+# sysctl readings (confirmed on the Tiger test hardware: hw.cputype=18,
+# hw.cpusubtype=100, hw.cpufrequency=2000000004) should show Leopard
+# eligible while still running Tiger.
+ok(perls(
+    version => '10.4.11', cpu_type => 'powerpc', cpu_family => 'g5', cpu_frequency_mhz => 2000,
+)->{leopard_upgrade_supported}, 'a real Tiger-era G5 snapshot reports Leopard as upgrade-supported');
