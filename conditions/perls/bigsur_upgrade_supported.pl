@@ -1,4 +1,4 @@
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 use MunkiPerls qw(perl_bool);
@@ -7,6 +7,8 @@ my $key = 'bigsur_upgrade_supported';
 sub perls {
     my ($context) = @_;
     my $snapshot = cached_hardware_snapshot($context->{output_path});
-    return { $key => perl_bool(evaluate_upgrade_perl($key, $snapshot)) };
+    my $supported = evaluate_upgrade_perl($key, $snapshot);
+    return {} unless defined $supported;
+    return { $key => perl_bool($supported) };
 }
 1;

@@ -7,7 +7,7 @@ on:
   pull_request:
 
 jobs:
-  perl:
+  perl-latest:
     permissions:
       contents: read
     strategy:
@@ -42,6 +42,79 @@ jobs:
           tools/build-pkg.pl --output "$RUNNER_TEMP/munki-perls-0.1.0.pkg"
           /usr/sbin/pkgutil --expand "$RUNNER_TEMP/munki-perls-0.1.0.pkg" "$RUNNER_TEMP/expanded"
           /usr/bin/lsbom "$RUNNER_TEMP/expanded/Bom"
+
+  perl-5-8-6:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            architecture: arm64
+            asset: perl-5.8.6-darwin-arm64.tar.zstd
+            sha256: 5f6726a5d81bea4f5abe2b94bbda9a094e138c8c8b13f7f0eea4f47bee12464a
+          - runner: macos-15
+            architecture: arm64
+            asset: perl-5.8.6-darwin-arm64.tar.zstd
+            sha256: 5f6726a5d81bea4f5abe2b94bbda9a094e138c8c8b13f7f0eea4f47bee12464a
+          - runner: macos-15-intel
+            architecture: x86_64
+            asset: perl-5.8.6-darwin-x64.tar.zstd
+            sha256: aa1a6ff32dc159fbd85ebd1a8b382d446250e4c34695b873e46cfdbf2a606520
+          - runner: macos-26
+            architecture: arm64
+            asset: perl-5.8.6-darwin-arm64.tar.zstd
+            sha256: 5f6726a5d81bea4f5abe2b94bbda9a094e138c8c8b13f7f0eea4f47bee12464a
+          - runner: macos-26-intel
+            architecture: x86_64
+            asset: perl-5.8.6-darwin-x64.tar.zstd
+            sha256: aa1a6ff32dc159fbd85ebd1a8b382d446250e4c34695b873e46cfdbf2a606520
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "${{ matrix.architecture }}"
+      - name: Install exact Perl 5.8.6
+        env:
+          ASSET: ${{ matrix.asset }}
+          SHA256: ${{ matrix.sha256 }}
+        run: |
+          tag=perl-5.8.6-20260322131611
+          archive="$RUNNER_TEMP/$ASSET"
+          curl --fail --location --silent --show-error \
+            --output "$archive" \
+            "https://github.com/shogo82148/build-perl/releases/download/$tag/$ASSET"
+          printf '%s  %s\n' "$SHA256" "$archive" | shasum -a 256 --check
+          command -v zstd >/dev/null 2>&1 || brew install zstd
+          zstd --decompress --long=30 "$archive" \
+            -o "$RUNNER_TEMP/perl-5.8.6.tar"
+          mkdir -p "$RUNNER_TEMP/perl-5.8.6" "$RUNNER_TEMP/foundation-stub"
+          tar -xf "$RUNNER_TEMP/perl-5.8.6.tar" \
+            -C "$RUNNER_TEMP/perl-5.8.6"
+          printf 'package Foundation;\nsub import { }\n1;\n' \
+            > "$RUNNER_TEMP/foundation-stub/Foundation.pm"
+          perl_root="$RUNNER_TEMP/perl-5.8.6"
+          perl_lib="$perl_root/lib"
+          printf 'PERL586=%s\nPERL5LIB=%s:%s:%s:%s:%s:conditions/lib\n' \
+            "$perl_root/bin/perl" \
+            "$RUNNER_TEMP/foundation-stub" \
+            "$perl_lib/5.8.6/darwin-2level" \
+            "$perl_lib/5.8.6" \
+            "$perl_lib/site_perl/5.8.6/darwin-2level" \
+            "$perl_lib/site_perl/5.8.6" >> "$GITHUB_ENV"
+      - name: Verify exact interpreter
+        run: test "$($PERL586 -e 'print $]')" = 5.008006
+      - name: Compile every Perl source and test
+        run: |
+          while IFS= read -r file; do
+            "$PERL586" -Iconditions/lib -c "$file"
+          done < <(find conditions tools t -type f \
+            \( -name '*.pl' -o -name '*.pm' -o -name '*.t' \) -print)
+      - name: Run Foundation-independent tests
+        run: |
+          "$PERL586" "$RUNNER_TEMP/perl-5.8.6/bin/prove" -lv \
+            t/00-syntax.t t/static-policy.t t/package.t
 
   perl-5-8-8:
     permissions:
@@ -117,7 +190,7 @@ jobs:
             t/00-syntax.t t/static-policy.t t/package.t
 
   release:
-    needs: [perl, perl-5-8-8]
+    needs: [perl-latest, perl-5-8-6, perl-5-8-8]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: macos-15
     permissions:

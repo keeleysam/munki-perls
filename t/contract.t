@@ -1,4 +1,4 @@
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 
@@ -44,8 +44,8 @@ my %arrays = map { $_ => 1 } qw(
 );
 my %strings = map { $_ => 1 } qw(
     client_id console_user crashplan_username filevault_status
-    gatekeeper_status mdm_install_date mdm_managed_user
-    physical_or_virtual sip_status virtual_type
+    gatekeeper_status highest_supported_macos_version mdm_install_date
+    mdm_managed_user physical_or_virtual sip_status virtual_type
 );
 my %integers = map { $_ => 1 } qw(
     mdm_hours_since_install shard
@@ -56,30 +56,22 @@ my @bundled_keys = sort qw(
     approved_system_extension_team_ids
     approved_system_extensions
     backtomymac_configured
-    bigsur_upgrade_supported
-    catalina_upgrade_supported
     client_id
     console_user
     console_user_logged_in
     crashplan_username
     filevault_status
     gatekeeper_status
-    goldengate_upgrade_supported
+    highest_supported_macos_version
+    latest_macos_supported
     local_user_dirs
     mdm_hours_since_install
     mdm_install_date
     mdm_managed_user
-    mojave_upgrade_supported
-    monterey_upgrade_supported
     physical_or_virtual
-    sequoia_upgrade_supported
     shard
-    sierra_upgrade_supported
     sip_status
-    sonoma_upgrade_supported
     system_extensions
-    tahoe_upgrade_supported
-    ventura_upgrade_supported
     virtual_type
 );
 
@@ -115,6 +107,20 @@ for my $key (@bundled_keys) {
         ok($value->isKindOfClass_(NSNumber->class()), "$key is a number");
         is($value->objCType(), 'c', "$key is specifically a plist boolean");
     }
+}
+
+for my $key (qw(
+    bigsur_upgrade_supported catalina_upgrade_supported elcapitan_upgrade_supported
+    goldengate_upgrade_supported leopard_upgrade_supported lion_upgrade_supported
+    mavericks_upgrade_supported
+    mojave_upgrade_supported monterey_upgrade_supported mountainlion_upgrade_supported
+    sequoia_upgrade_supported sierra_upgrade_supported snowleopard_upgrade_supported
+    sonoma_upgrade_supported
+    tahoe_upgrade_supported ventura_upgrade_supported yosemite_upgrade_supported
+)) {
+    my $value = $plist->objectForKey_(foundation_string($key));
+    next unless blessed($value) && $$value;
+    ok($value->isKindOfClass_(NSNumber->class()), "$key, if present, is a number");
 }
 
 my $only_output = "$directory/VirtualType.plist";

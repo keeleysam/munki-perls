@@ -1,8 +1,9 @@
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 
 use File::Temp qw(tempdir);
+use POSIX ();
 use Scalar::Util qw(blessed);
 use Test::More 'no_plan';
 use lib 'conditions/lib';
@@ -17,8 +18,12 @@ sub snapshot {
     return {
         version => '15.5',
         model => "Mac$marker,1",
-        board_id => "Mac-BOARD-$marker",
         hardware_target => "J${marker}AP",
+        cpu_type => 'intel',
+        cpu_family => '',
+        cpu_64bit => $marker % 2,
+        cpu_frequency_mhz => 2000 + $marker,
+        ram_mb => 8192,
         is_virtual => $marker % 2,
     };
 }
@@ -62,8 +67,8 @@ while (my $key = $keys->nextObject()) {
 is_deeply(
     [sort @cache_keys],
     [sort qw(
-        board_id boot_identifier hardware_target is_virtual model
-        schema_version version
+        boot_identifier cpu_64bit cpu_family cpu_frequency_mhz cpu_type
+        hardware_target is_virtual model ram_mb schema_version version
     )],
     'cache contains only boot, schema, OS, and hardware fields'
 );
@@ -141,14 +146,18 @@ for my $number (1 .. 6) {
             $output,
             boot_identifier => 'concurrent-boot',
             collector => sub {
-                open(my $log, '>>', $collection_log) or exit 2;
+                open(my $log, '>>', $collection_log) or POSIX::_exit(2);
                 print {$log} "collected\n";
                 close $log;
                 select undef, undef, undef, 0.1;
                 return snapshot(8);
             },
         );
-        exit($result->{model} eq snapshot(8)->{model} ? 0 : 3);
+        # A forked child must not run Perl's normal exit path here: global
+        # destruction would fire File::Temp's cleanup END block a second
+        # time for the tempdir this process inherited from its parent,
+        # deleting it out from under any siblings still using it.
+        POSIX::_exit($result->{model} eq snapshot(8)->{model} ? 0 : 3);
     }
     push @children, $pid;
 }

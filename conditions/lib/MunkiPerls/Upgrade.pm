@@ -1,9 +1,8 @@
 package MunkiPerls::Upgrade;
 
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
-no warnings 'qw';
 
 use Exporter qw(import);
 use Fcntl qw(:DEFAULT :flock);
@@ -11,938 +10,411 @@ use Scalar::Util qw(blessed);
 
 use MunkiPerls qw(
     foundation_dictionary foundation_string load_plist_file objc_string
-    parse_plist_output run_command system_version write_plist_file
+    parse_plist_output run_command system_profiler_snapshot system_version
+    write_plist_file
 );
 
 our @EXPORT_OK = qw(
     cached_hardware_snapshot collect_hardware_snapshot
     evaluate_upgrade_perl evaluate_upgrade_perls
-    is_version_at_least version_compare
+    highest_supported_macos_version is_version_at_least latest_macos_supported
+    version_compare
 );
 
 use constant HARDWARE_CACHE_SCHEMA_VERSION => 1;
 use constant NS_PROPERTY_LIST_XML_FORMAT_V1_0 => 100;
 
-my %SIERRA_BLOCKED_MODEL = map { $_ => 1 } qw(
-        iMac4,1
-        iMac4,2
-        iMac5,1
-        iMac5,2
-        iMac6,1
-        iMac7,1
-        iMac8,1
-        iMac9,1
-        MacBook1,1
-        MacBook2,1
-        MacBook3,1
-        MacBook4,1
-        MacBook5,1
-        MacBook5,2
-        MacBookAir1,1
-        MacBookAir2,1
-        MacBookPro1,1
-        MacBookPro1,2
-        MacBookPro2,1
-        MacBookPro2,2
-        MacBookPro3,1
-        MacBookPro4,1
-        MacBookPro5,1
-        MacBookPro5,2
-        MacBookPro5,3
-        MacBookPro5,4
-        MacBookPro5,5
-        Macmini1,1
-        Macmini2,1
-        Macmini3,1
-        MacPro1,1
-        MacPro2,1
-        MacPro3,1
-        MacPro4,1
-        Xserve1,1
-        Xserve2,1
-        Xserve3,1
-    );
-my %SIERRA_BOARD = map { $_ => 1 } qw(
-        Mac-00BE6ED71E35EB86
-        Mac-031AEE4D24BFF0B1
-        Mac-031B6874CF7F642A
-        Mac-06F11F11946D27C5
-        Mac-06F11FD93F0323C5
-        Mac-189A3D4F975D5FFC
-        Mac-27ADBB7B4CEE8E61
-        Mac-2BD1B31983FE1663
-        Mac-2E6FAB96566FE58C
-        Mac-35C1E88140C3E6CF
-        Mac-35C5E08120C7EEAF
-        Mac-3CBD00234E554E41
-        Mac-42FD25EABCABB274
-        Mac-473D31EABEB93F9B
-        Mac-4B7AC7E43945597E
-        Mac-4BC72D62AD45599E
-        Mac-4BFBC784B845591E
-        Mac-50619A408DB004DA
-        Mac-65CE76090165799A
-        Mac-66E35819EE2D0D05
-        Mac-66F35F19FE2A0D05
-        Mac-6F01561E16C75D06
-        Mac-742912EFDBEE19B3
-        Mac-77EB7D7DAF985301
-        Mac-7BA5B2794B2CDB12
-        Mac-7DF21CB3ED6977E5
-        Mac-7DF2A3B5E5D671ED
-        Mac-81E3E92DD6088272
-        Mac-8ED6AF5B48C039E1
-        Mac-937CB26E2E02BB01
-        Mac-942452F5819B1C1B
-        Mac-942459F5819B171B
-        Mac-94245A3940C91C80
-        Mac-94245B3640C91C81
-        Mac-942B59F58194171B
-        Mac-942B5BF58194151B
-        Mac-942C5DF58193131B
-        Mac-9AE82516C7C6B903
-        Mac-9F18E312C5C2BF0B
-        Mac-A369DDC4E67F1C45
-        Mac-A5C67F76ED83108C
-        Mac-AFD8A9D944EA4843
-        Mac-B809C3757DA9BB8D
-        Mac-BE0E8AC46FE800CC
-        Mac-C08A6BB70A942AC2
-        Mac-C3EC7CD22292981F
-        Mac-DB15BD556843C820
-        Mac-E43C1C25D4880AD6
-        Mac-F2208EC8
-        Mac-F221BEC8
-        Mac-F221DCC8
-        Mac-F222BEC8
-        Mac-F2238AC8
-        Mac-F2238BAE
-        Mac-F22586C8
-        Mac-F22589C8
-        Mac-F2268CC8
-        Mac-F2268DAE
-        Mac-F2268DC8
-        Mac-F22C89C8
-        Mac-F22C8AC8
-        Mac-F305150B0C7DEEEF
-        Mac-F60DEB81FF30ACF6
-        Mac-F65AE981FFA204ED
-        Mac-FA842E06C61E91C5
-        Mac-FC02E91DDD3FA6A4
-        Mac-FFE5EF870D7BA81A
-    );
-my %MOJAVE_BLOCKED_MODEL = map { $_ => 1 } qw(
-        MacBookPro4,1
-        MacPro2,1
-        Macmini5,2
-        Macmini5,1
-        MacBookPro5,1
-        MacBookPro1,1
-        MacBookPro5,3
-        MacBookPro5,2
-        iMac8,1
-        MacBookPro5,4
-        MacBookAir4,2
-        Macmini2,1
-        iMac5,2
-        iMac11,3
-        MacBookPro8,2
-        MacBookPro3,1
-        Macmini5,3
-        MacBookPro1,2
-        Macmini4,1
-        iMac9,1
-        iMac6,1
-        Macmini3,1
-        Macmini1,1
-        MacBookPro6,1
-        MacBookPro2,2
-        MacBookPro2,1
-        iMac12,2
-        MacBook3,1
-        MacPro3,1
-        MacBook5,1
-        MacBook5,2
-        iMac11,1
-        iMac10,1
-        MacBookPro7,1
-        MacBook2,1
-        MacBookAir4,1
-        MacPro4,1
-        MacBookPro6,2
-        iMac12,1
-        MacBook1,1
-        MacBookPro5,5
-        iMac11,2
-        iMac4,2
-        Xserve2,1
-        MacBookAir3,1
-        MacBookAir3,2
-        MacBookAir1,1
-        Xserve3,1
-        iMac4,1
-        MacBookAir2,1
-        Xserve1,1
-        iMac5,1
-        MacBookPro8,1
-        MacBook7,1
-        MacBookPro8,3
-        iMac7,1
-        MacBook6,1
-        MacBook4,1
-        MacPro1,1
-    );
-my %MOJAVE_BOARD = map { $_ => 1 } qw(
-        Mac-06F11F11946D27C5
-        Mac-031B6874CF7F642A
-        Mac-CAD6701F7CEA0921
-        Mac-50619A408DB004DA
-        Mac-7BA5B2D9E42DDD94
-        Mac-473D31EABEB93F9B
-        Mac-AFD8A9D944EA4843
-        Mac-B809C3757DA9BB8D
-        Mac-7DF2A3B5E5D671ED
-        Mac-35C1E88140C3E6CF
-        Mac-77EB7D7DAF985301
-        Mac-2E6FAB96566FE58C
-        Mac-827FB448E656EC26
-        Mac-BE0E8AC46FE800CC
-        Mac-00BE6ED71E35EB86
-        Mac-4B7AC7E43945597E
-        Mac-5A49A77366F81C72
-        Mac-35C5E08120C7EEAF
-        Mac-FFE5EF870D7BA81A
-        Mac-C6F71043CEAA02A6
-        Mac-4B682C642B45593E
-        Mac-90BE64C3CB5A9AEB
-        Mac-66F35F19FE2A0D05
-        Mac-189A3D4F975D5FFC
-        Mac-B4831CEBD52A0C4C
-        Mac-FA842E06C61E91C5
-        Mac-FC02E91DDD3FA6A4
-        Mac-06F11FD93F0323C5
-        Mac-9AE82516C7C6B903
-        Mac-27ADBB7B4CEE8E61
-        Mac-6F01561E16C75D06
-        Mac-F60DEB81FF30ACF6
-        Mac-81E3E92DD6088272
-        Mac-7DF21CB3ED6977E5
-        Mac-937CB26E2E02BB01
-        Mac-3CBD00234E554E41
-        Mac-F221BEC8
-        Mac-9F18E312C5C2BF0B
-        Mac-65CE76090165799A
-        Mac-CF21D135A7D34AA6
-        Mac-F65AE981FFA204ED
-        Mac-112B0A653D3AAB9C
-        Mac-DB15BD556843C820
-        Mac-937A206F2EE63C01
-        Mac-77F17D7DA9285301
-        Mac-C3EC7CD22292981F
-        Mac-BE088AF8C5EB4FA2
-        Mac-551B86E5744E2388
-        Mac-A5C67F76ED83108C
-        Mac-031AEE4D24BFF0B1
-        Mac-EE2EBD4B90B839A8
-        Mac-42FD25EABCABB274
-        Mac-F305150B0C7DEEEF
-        Mac-2BD1B31983FE1663
-        Mac-66E35819EE2D0D05
-        Mac-A369DDC4E67F1C45
-        Mac-E43C1C25D4880AD6
-    );
-my %CATALINA_BLOCKED_MODEL = map { $_ => 1 } qw(
-        iMac4,1
-        iMac4,2
-        iMac5,1
-        iMac5,2
-        iMac6,1
-        iMac7,1
-        iMac8,1
-        iMac9,1
-        iMac10,1
-        iMac11,1
-        iMac11,2
-        iMac11,3
-        iMac12,1
-        iMac12,2
-        MacBook1,1
-        MacBook2,1
-        MacBook3,1
-        MacBook4,1
-        MacBook5,1
-        MacBook5,2
-        MacBook6,1
-        MacBook7,1
-        MacBookAir1,1
-        MacBookAir2,1
-        MacBookAir3,1
-        MacBookAir3,2
-        MacBookAir4,1
-        MacBookAir4,2
-        MacBookPro1,1
-        MacBookPro1,2
-        MacBookPro2,1
-        MacBookPro2,2
-        MacBookPro3,1
-        MacBookPro4,1
-        MacBookPro5,1
-        MacBookPro5,2
-        MacBookPro5,3
-        MacBookPro5,4
-        MacBookPro5,5
-        MacBookPro6,1
-        MacBookPro6,2
-        MacBookPro7,1
-        MacBookPro8,1
-        MacBookPro8,2
-        MacBookPro8,3
-        Macmini1,1
-        Macmini2,1
-        Macmini3,1
-        Macmini4,1
-        Macmini5,1
-        Macmini5,2
-        Macmini5,3
-        MacPro1,1
-        MacPro2,1
-        MacPro3,1
-        MacPro4,1
-        MacPro5,1
-        Xserve1,1
-        Xserve2,1
-        Xserve3,1
-    );
-my %CATALINA_BOARD = map { $_ => 1 } qw(
-        Mac-00BE6ED71E35EB86
-        Mac-1E7E29AD0135F9BC
-        Mac-2BD1B31983FE1663
-        Mac-2E6FAB96566FE58C
-        Mac-3CBD00234E554E41
-        Mac-4B7AC7E43945597E
-        Mac-4B682C642B45593E
-        Mac-5A49A77366F81C72
-        Mac-06F11F11946D27C5
-        Mac-06F11FD93F0323C5
-        Mac-6F01561E16C75D06
-        Mac-7BA5B2D9E42DDD94
-        Mac-7BA5B2DFE22DDD8C
-        Mac-7DF2A3B5E5D671ED
-        Mac-7DF21CB3ED6977E5
-        Mac-9AE82516C7C6B903
-        Mac-9F18E312C5C2BF0B
-        Mac-27AD2F918AE68F61
-        Mac-27ADBB7B4CEE8E61
-        Mac-031AEE4D24BFF0B1
-        Mac-031B6874CF7F642A
-        Mac-35C1E88140C3E6CF
-        Mac-35C5E08120C7EEAF
-        Mac-42FD25EABCABB274
-        Mac-53FDB3D8DB8CA971
-        Mac-65CE76090165799A
-        Mac-66E35819EE2D0D05
-        Mac-66F35F19FE2A0D05
-        Mac-77EB7D7DAF985301
-        Mac-77F17D7DA9285301
-        Mac-81E3E92DD6088272
-        Mac-90BE64C3CB5A9AEB
-        Mac-112B0A653D3AAB9C
-        Mac-189A3D4F975D5FFC
-        Mac-226CB3C6A851A671
-        Mac-473D31EABEB93F9B
-        Mac-551B86E5744E2388
-        Mac-747B1AEFF11738BE
-        Mac-827FAC58A8FDFA22
-        Mac-827FB448E656EC26
-        Mac-937A206F2EE63C01
-        Mac-937CB26E2E02BB01
-        Mac-9394BDF4BF862EE7
-        Mac-50619A408DB004DA
-        Mac-63001698E7A34814
-        Mac-112818653D3AABFC
-        Mac-A5C67F76ED83108C
-        Mac-A369DDC4E67F1C45
-        Mac-AA95B1DDAB278B95
-        Mac-AFD8A9D944EA4843
-        Mac-B809C3757DA9BB8D
-        Mac-B4831CEBD52A0C4C
-        Mac-BE0E8AC46FE800CC
-        Mac-BE088AF8C5EB4FA2
-        Mac-C3EC7CD22292981F
-        Mac-C6F71043CEAA02A6
-        Mac-CAD6701F7CEA0921
-        Mac-CF21D135A7D34AA6
-        Mac-DB15BD556843C820
-        Mac-E43C1C25D4880AD6
-        Mac-EE2EBD4B90B839A8
-        Mac-F60DEB81FF30ACF6
-        Mac-F65AE981FFA204ED
-        Mac-F305150B0C7DEEEF
-        Mac-FA842E06C61E91C5
-        Mac-FC02E91DDD3FA6A4
-        Mac-FFE5EF870D7BA81A
-    );
-
 my @RELEASES = (
     {
         name => 'sierra',
-        target => '10.12',
-        minimum => '10.7',
-        blocked_models => \%SIERRA_BLOCKED_MODEL,
-        boards => \%SIERRA_BOARD,
-        require_model_and_board => 1,
+        version => '10.12',
+        minimum_from_version => '10.7.5',
+        allow => [
+            { type => 'model', values => {
+                'MacBook6,1' => 1, 'MacBook7,1' => 1, 'MacBook8,1' => 1, 'MacBook9,1' => 1,
+                'MacBookAir3,1' => 1, 'MacBookAir3,2' => 1, 'MacBookAir4,1' => 1, 'MacBookAir4,2' => 1,
+                'MacBookAir5,1' => 1, 'MacBookAir5,2' => 1, 'MacBookAir6,1' => 1, 'MacBookAir6,2' => 1,
+                'MacBookAir7,1' => 1, 'MacBookAir7,2' => 1,
+                'MacBookPro10,1' => 1, 'MacBookPro10,2' => 1, 'MacBookPro11,1' => 1, 'MacBookPro11,2' => 1,
+                'MacBookPro11,3' => 1, 'MacBookPro11,4' => 1, 'MacBookPro11,5' => 1, 'MacBookPro12,1' => 1,
+                'MacBookPro13,1' => 1, 'MacBookPro13,2' => 1, 'MacBookPro13,3' => 1,
+                'MacBookPro6,1' => 1, 'MacBookPro6,2' => 1, 'MacBookPro7,1' => 1,
+                'MacBookPro8,1' => 1, 'MacBookPro8,2' => 1, 'MacBookPro8,3' => 1,
+                'MacBookPro9,1' => 1, 'MacBookPro9,2' => 1,
+                'MacPro4,1' => 1, 'MacPro5,1' => 1, 'MacPro6,1' => 1,
+                'Macmini4,1' => 1, 'Macmini5,1' => 1, 'Macmini5,2' => 1, 'Macmini5,3' => 1,
+                'Macmini6,1' => 1, 'Macmini6,2' => 1, 'Macmini7,1' => 1,
+                'iMac10,1' => 1, 'iMac11,1' => 1, 'iMac11,2' => 1, 'iMac11,3' => 1,
+                'iMac12,1' => 1, 'iMac12,2' => 1, 'iMac13,1' => 1, 'iMac13,2' => 1, 'iMac13,3' => 1,
+                'iMac14,1' => 1, 'iMac14,2' => 1, 'iMac14,3' => 1, 'iMac14,4' => 1,
+                'iMac15,1' => 1, 'iMac16,1' => 1, 'iMac16,2' => 1, 'iMac17,1' => 1,
+            } },
+        ],
     },
     {
         name => 'mojave',
-        target => '10.14',
-        minimum => '10.7',
-        blocked_models => \%MOJAVE_BLOCKED_MODEL,
-        boards => \%MOJAVE_BOARD,
-        require_model_and_board => 1,
+        version => '10.14',
+        minimum_from_version => '10.8',
+        allow => [
+            { type => 'model', values => {
+                'MacBook10,1' => 1, 'MacBook8,1' => 1, 'MacBook9,1' => 1,
+                'MacBookAir5,1' => 1, 'MacBookAir5,2' => 1, 'MacBookAir6,1' => 1, 'MacBookAir6,2' => 1,
+                'MacBookAir7,1' => 1, 'MacBookAir7,2' => 1,
+                'MacBookPro10,1' => 1, 'MacBookPro10,2' => 1, 'MacBookPro11,1' => 1, 'MacBookPro11,2' => 1,
+                'MacBookPro11,3' => 1, 'MacBookPro11,4' => 1, 'MacBookPro11,5' => 1, 'MacBookPro12,1' => 1,
+                'MacBookPro13,1' => 1, 'MacBookPro13,2' => 1, 'MacBookPro13,3' => 1,
+                'MacBookPro14,1' => 1, 'MacBookPro14,2' => 1, 'MacBookPro14,3' => 1,
+                'MacBookPro15,1' => 1, 'MacBookPro15,2' => 1,
+                'MacBookPro9,1' => 1, 'MacBookPro9,2' => 1,
+                'MacPro4,1' => 1, 'MacPro6,1' => 1,
+                'Macmini6,1' => 1, 'Macmini6,2' => 1, 'Macmini7,1' => 1,
+                'iMac13,1' => 1, 'iMac13,2' => 1, 'iMac13,3' => 1,
+                'iMac14,1' => 1, 'iMac14,2' => 1, 'iMac14,3' => 1, 'iMac14,4' => 1,
+                'iMac15,1' => 1, 'iMac16,1' => 1, 'iMac16,2' => 1, 'iMac17,1' => 1,
+                'iMac18,1' => 1, 'iMac18,2' => 1, 'iMac18,3' => 1, 'iMacPro1,1' => 1,
+            } },
+            # TODO: MacPro5,1 also requires a Metal-capable GPU upgrade to
+            # actually run Mojave. Modeling this needs a new 'gpu_capable'
+            # condition type (a gpu_chipset_models snapshot field sourced
+            # from system_profiler's SPDisplaysDataType, checked against
+            # Apple's published Metal-capable GPU list) - deferred.
+            { type => 'model', values => { 'MacPro5,1' => 1 } },
+        ],
     },
     {
         name => 'catalina',
-        target => '10.15',
-        minimum => '10.9',
-        blocked_models => \%CATALINA_BLOCKED_MODEL,
-        boards => \%CATALINA_BOARD,
-        require_model_and_board => 1,
+        version => '10.15',
+        minimum_from_version => '10.9',
+        allow => [
+            { type => 'model', values => {
+                'MacBook10,1' => 1, 'MacBook8,1' => 1, 'MacBook9,1' => 1,
+                'MacBookAir5,1' => 1, 'MacBookAir5,2' => 1, 'MacBookAir6,1' => 1, 'MacBookAir6,2' => 1,
+                'MacBookAir7,1' => 1, 'MacBookAir7,2' => 1, 'MacBookAir8,1' => 1, 'MacBookAir8,2' => 1,
+                'MacBookPro10,1' => 1, 'MacBookPro10,2' => 1, 'MacBookPro11,1' => 1, 'MacBookPro11,2' => 1,
+                'MacBookPro11,3' => 1, 'MacBookPro11,4' => 1, 'MacBookPro11,5' => 1, 'MacBookPro12,1' => 1,
+                'MacBookPro13,1' => 1, 'MacBookPro13,2' => 1, 'MacBookPro13,3' => 1,
+                'MacBookPro14,1' => 1, 'MacBookPro14,2' => 1, 'MacBookPro14,3' => 1,
+                'MacBookPro15,1' => 1, 'MacBookPro15,2' => 1, 'MacBookPro15,3' => 1, 'MacBookPro15,4' => 1,
+                'MacBookPro9,1' => 1, 'MacBookPro9,2' => 1,
+                'MacPro6,1' => 1, 'MacPro7,1' => 1,
+                'Macmini6,1' => 1, 'Macmini6,2' => 1, 'Macmini7,1' => 1, 'Macmini8,1' => 1,
+                'iMac13,1' => 1, 'iMac13,2' => 1, 'iMac13,3' => 1,
+                'iMac14,1' => 1, 'iMac14,2' => 1, 'iMac14,3' => 1, 'iMac14,4' => 1,
+                'iMac15,1' => 1, 'iMac16,1' => 1, 'iMac16,2' => 1, 'iMac17,1' => 1,
+                'iMac18,1' => 1, 'iMac18,2' => 1, 'iMac18,3' => 1, 'iMac19,1' => 1, 'iMac19,2' => 1,
+                'iMacPro1,1' => 1,
+            } },
+        ],
     },
     {
         name => 'bigsur',
-        target => '11',
-        minimum => '10.7',
-        models => { map { $_ => 1 } qw(
-        MacBook10,1
-        MacBook8,1
-        MacBook9,1
-        MacBookAir6,1
-        MacBookAir6,2
-        MacBookAir7,1
-        MacBookAir7,2
-        MacBookAir8,1
-        MacBookAir8,2
-        MacBookPro11,2
-        MacBookPro11,3
-        MacBookPro11,4
-        MacBookPro11,5
-        MacBookPro12,1
-        MacBookPro13,1
-        MacBookPro13,2
-        MacBookPro13,3
-        MacBookPro14,1
-        MacBookPro14,2
-        MacBookPro14,3
-        MacBookPro15,1
-        MacBookPro15,2
-        MacBookPro15,3
-        MacBookPro15,4
-        MacPro6,1
-        MacPro7,1
-        Macmini7,1
-        Macmini8,1
-        iMac14,4
-        iMac15,1
-        iMac16,1
-        iMac16,2
-        iMac17,1
-        iMac18,1
-        iMac18,2
-        iMac18,3
-        iMac19,1
-        iMac19,2
-        iMacPro1,1
-        VirtualMac2,1
-    ) },
-        boards => { map { $_ => 1 } qw(
-        Mac-226CB3C6A851A671
-        Mac-36B6B6DA9CFCD881
-        Mac-112818653D3AABFC
-        Mac-9394BDF4BF862EE7
-        Mac-AA95B1DDAB278B95
-        Mac-CAD6701F7CEA0921
-        Mac-50619A408DB004DA
-        Mac-7BA5B2D9E42DDD94
-        Mac-CFF7D910A743CAAF
-        Mac-B809C3757DA9BB8D
-        Mac-F305150B0C7DEEEF
-        Mac-35C1E88140C3E6CF
-        Mac-827FAC58A8FDFA22
-        Mac-6FEBD60817C77D8A
-        Mac-7BA5B2DFE22DDD8C
-        Mac-827FB448E656EC26
-        Mac-66E35819EE2D0D05
-        Mac-BE0E8AC46FE800CC
-        Mac-5A49A77366F81C72
-        Mac-63001698E7A34814
-        Mac-937CB26E2E02BB01
-        Mac-FFE5EF870D7BA81A
-        Mac-87DCB00F4AD77EEA
-        Mac-A61BADE1FDAD7B05
-        Mac-C6F71043CEAA02A6
-        Mac-4B682C642B45593E
-        Mac-1E7E29AD0135F9BC
-        Mac-90BE64C3CB5A9AEB
-        Mac-3CBD00234E554E41
-        Mac-B4831CEBD52A0C4C
-        Mac-E1008331FDC96864
-        Mac-FA842E06C61E91C5
-        Mac-81E3E92DD6088272
-        Mac-06F11FD93F0323C5
-        Mac-06F11F11946D27C5
-        Mac-F60DEB81FF30ACF6
-        Mac-473D31EABEB93F9B
-        Mac-0CFF9C7C2B63DF8D
-        Mac-9F18E312C5C2BF0B
-        Mac-E7203C0F68AA0004
-        Mac-65CE76090165799A
-        Mac-CF21D135A7D34AA6
-        Mac-112B0A653D3AAB9C
-        Mac-DB15BD556843C820
-        Mac-27AD2F918AE68F61
-        Mac-937A206F2EE63C01
-        Mac-77F17D7DA9285301
-        Mac-9AE82516C7C6B903
-        Mac-BE088AF8C5EB4FA2
-        Mac-551B86E5744E2388
-        Mac-564FBA6031E5946A
-        Mac-A5C67F76ED83108C
-        Mac-5F9802EFE386AA28
-        Mac-747B1AEFF11738BE
-        Mac-AF89B6D9451A490B
-        Mac-EE2EBD4B90B839A8
-        Mac-42FD25EABCABB274
-        Mac-2BD1B31983FE1663
-        Mac-7DF21CB3ED6977E5
-        Mac-A369DDC4E67F1C45
-        Mac-35C5E08120C7EEAF
-        Mac-E43C1C25D4880AD6
-        Mac-53FDB3D8DB8CA971
-        VMM-x86
-    ) },
-        hardware_targets => { map { $_ => 1 } () },
+        version => '11',
+        minimum_from_version => '10.7', # TODO verify against real Install macOS Big Sur.app LSMinimumSystemVersion
+        allow => [
+            { type => 'model', values => {
+                'MacBook10,1' => 1, 'MacBook8,1' => 1, 'MacBook9,1' => 1,
+                'MacBookAir6,1' => 1, 'MacBookAir6,2' => 1, 'MacBookAir7,1' => 1, 'MacBookAir7,2' => 1,
+                'MacBookAir8,1' => 1, 'MacBookAir8,2' => 1, 'MacBookAir9,1' => 1,
+                'MacBookPro11,2' => 1, 'MacBookPro11,3' => 1, 'MacBookPro11,4' => 1, 'MacBookPro11,5' => 1,
+                'MacBookPro12,1' => 1, 'MacBookPro13,1' => 1, 'MacBookPro13,2' => 1, 'MacBookPro13,3' => 1,
+                'MacBookPro14,1' => 1, 'MacBookPro14,2' => 1, 'MacBookPro14,3' => 1,
+                'MacBookPro15,1' => 1, 'MacBookPro15,2' => 1, 'MacBookPro15,3' => 1, 'MacBookPro15,4' => 1,
+                'MacBookPro16,1' => 1, 'MacBookPro16,2' => 1, 'MacBookPro16,3' => 1, 'MacBookPro16,4' => 1,
+                'MacPro6,1' => 1, 'MacPro7,1' => 1,
+                'Macmini7,1' => 1, 'Macmini8,1' => 1, 'VirtualMac2,1' => 1,
+                'iMac14,4' => 1, 'iMac15,1' => 1, 'iMac16,1' => 1, 'iMac16,2' => 1, 'iMac17,1' => 1,
+                'iMac18,1' => 1, 'iMac18,2' => 1, 'iMac18,3' => 1, 'iMac19,1' => 1, 'iMac19,2' => 1,
+                'iMac20,1' => 1, 'iMac20,2' => 1, 'iMacPro1,1' => 1,
+            } },
+        ],
     },
     {
         name => 'monterey',
-        target => '12',
-        minimum => '10.7',
-        models => { map { $_ => 1 } qw(
-        MacBook10,1
-        MacBook9,1
-        MacBookAir7,1
-        MacBookAir7,2
-        MacBookAir8,1
-        MacBookAir8,2
-        MacBookAir9,1
-        MacBookPro11,4
-        MacBookPro11,5
-        MacBookPro12,1
-        MacBookPro13,1
-        MacBookPro13,2
-        MacBookPro13,3
-        MacBookPro14,1
-        MacBookPro14,2
-        MacBookPro14,3
-        MacBookPro15,1
-        MacBookPro15,2
-        MacBookPro15,3
-        MacBookPro15,4
-        MacBookPro16,1
-        MacBookPro16,2
-        MacBookPro16,3
-        MacBookPro16,4
-        MacPro6,1
-        MacPro7,1
-        Macmini7,1
-        Macmini8,1
-        iMac16,1
-        iMac16,2
-        iMac17,1
-        iMac18,1
-        iMac18,2
-        iMac18,3
-        iMac19,1
-        iMac19,2
-        iMac20,1
-        iMac20,2
-        iMacPro1,1
-        VirtualMac2,1
-    ) },
-        boards => { map { $_ => 1 } qw(
-        Mac-06F11F11946D27C5
-        Mac-06F11FD93F0323C5
-        Mac-0CFF9C7C2B63DF8D
-        Mac-112818653D3AABFC
-        Mac-1E7E29AD0135F9BC
-        Mac-226CB3C6A851A671
-        Mac-27AD2F918AE68F61
-        Mac-35C5E08120C7EEAF
-        Mac-473D31EABEB93F9B
-        Mac-4B682C642B45593E
-        Mac-53FDB3D8DB8CA971
-        Mac-551B86E5744E2388
-        Mac-5F9802EFE386AA28
-        Mac-63001698E7A34814
-        Mac-65CE76090165799A
-        Mac-66E35819EE2D0D05
-        Mac-77F17D7DA9285301
-        Mac-7BA5B2D9E42DDD94
-        Mac-7BA5B2DFE22DDD8C
-        Mac-827FAC58A8FDFA22
-        Mac-827FB448E656EC26
-        Mac-937A206F2EE63C01
-        Mac-937CB26E2E02BB01
-        Mac-9AE82516C7C6B903
-        Mac-9F18E312C5C2BF0B
-        Mac-A369DDC4E67F1C45
-        Mac-A5C67F76ED83108C
-        Mac-A61BADE1FDAD7B05
-        Mac-AA95B1DDAB278B95
-        Mac-AF89B6D9451A490B
-        Mac-B4831CEBD52A0C4C
-        Mac-B809C3757DA9BB8D
-        Mac-BE088AF8C5EB4FA2
-        Mac-CAD6701F7CEA0921
-        Mac-CFF7D910A743CAAF
-        Mac-DB15BD556843C820
-        Mac-E1008331FDC96864
-        Mac-E43C1C25D4880AD6
-        Mac-E7203C0F68AA0004
-        Mac-EE2EBD4B90B839A8
-        Mac-F60DEB81FF30ACF6
-        Mac-FFE5EF870D7BA81A
-        VMM-x86
-    ) },
-        hardware_targets => { map { $_ => 1 } qw(
-        J132AP
-        J137AP
-        J140AAP
-        J140KAP
-        J152FAP
-        J160AP
-        J174AP
-        J185AP
-        J185FAP
-        J213AP
-        J214AP
-        J214KAP
-        J215AP
-        J223AP
-        J230AP
-        J230KAP
-        J274AP
-        J293AP
-        J313AP
-        J314cAP
-        J314sAP
-        J316cAP
-        J316sAP
-        J456AP
-        J457AP
-        J680AP
-        J780AP
-        VMA2MACOSAP
-        VMM-x86
-        X589AMLUAP
-        X86LEGACYAP
-    ) },
+        version => '12',
+        minimum_from_version => '10.7', # TODO verify against real Install macOS Monterey.app LSMinimumSystemVersion
+        allow => [
+            { type => 'model', values => {
+                'MacBook10,1' => 1, 'MacBook9,1' => 1,
+                'MacBookAir7,1' => 1, 'MacBookAir7,2' => 1, 'MacBookAir8,1' => 1, 'MacBookAir8,2' => 1,
+                'MacBookAir9,1' => 1,
+                'MacBookPro11,4' => 1, 'MacBookPro11,5' => 1, 'MacBookPro12,1' => 1,
+                'MacBookPro13,1' => 1, 'MacBookPro13,2' => 1, 'MacBookPro13,3' => 1,
+                'MacBookPro14,1' => 1, 'MacBookPro14,2' => 1, 'MacBookPro14,3' => 1,
+                'MacBookPro15,1' => 1, 'MacBookPro15,2' => 1, 'MacBookPro15,3' => 1, 'MacBookPro15,4' => 1,
+                'MacBookPro16,1' => 1, 'MacBookPro16,2' => 1, 'MacBookPro16,3' => 1, 'MacBookPro16,4' => 1,
+                'MacPro6,1' => 1, 'MacPro7,1' => 1,
+                'Macmini7,1' => 1, 'Macmini8,1' => 1, 'VirtualMac2,1' => 1,
+                'iMac16,1' => 1, 'iMac16,2' => 1, 'iMac17,1' => 1,
+                'iMac18,1' => 1, 'iMac18,2' => 1, 'iMac18,3' => 1, 'iMac19,1' => 1, 'iMac19,2' => 1,
+                'iMac20,1' => 1, 'iMac20,2' => 1, 'iMacPro1,1' => 1,
+            } },
+            { type => 'hardware_target', values => {
+                'J132AP' => 1, 'J137AP' => 1, 'J140AAP' => 1, 'J140KAP' => 1, 'J152FAP' => 1,
+                'J160AP' => 1, 'J174AP' => 1, 'J185AP' => 1, 'J185FAP' => 1,
+                'J213AP' => 1, 'J214AP' => 1, 'J214KAP' => 1, 'J215AP' => 1, 'J223AP' => 1,
+                'J230AP' => 1, 'J230KAP' => 1, 'J274AP' => 1, 'J293AP' => 1, 'J313AP' => 1,
+                'J314cAP' => 1, 'J314sAP' => 1, 'J316cAP' => 1, 'J316sAP' => 1,
+                'J456AP' => 1, 'J457AP' => 1, 'J680AP' => 1, 'J780AP' => 1,
+                'VMA2MACOSAP' => 1, 'VMM-x86' => 1, 'X589AMLUAP' => 1, 'X86LEGACYAP' => 1,
+            } },
+        ],
     },
     {
         name => 'ventura',
-        target => '13',
-        minimum => '10.7',
-        models => { map { $_ => 1 } qw(
-        iMac18,1
-        iMac18,2
-        iMac18,3
-        iMac19,1
-        iMac19,2
-        iMac20,1
-        iMac20,2
-        iMac21,1
-        iMac21,2
-        iMacPro1,1
-        iSim1,1
-        Mac13,1
-        Mac13,2
-        Mac14,2
-        Mac14,7
-        MacBook10,1
-        MacBookAir10,1
-        MacBookAir8,1
-        MacBookAir8,2
-        MacBookAir9,1
-        MacBookPro14,1
-        MacBookPro14,2
-        MacBookPro14,3
-        MacBookPro15,1
-        MacBookPro15,2
-        MacBookPro15,3
-        MacBookPro15,4
-        MacBookPro16,1
-        MacBookPro16,2
-        MacBookPro16,3
-        MacBookPro16,4
-        MacBookPro17,1
-        MacBookPro18,1
-        MacBookPro18,2
-        MacBookPro18,3
-        MacBookPro18,4
-        Macmini8,1
-        Macmini9,1
-        MacPro7,1
-        VirtualMac2,1
-    ) },
-        boards => { map { $_ => 1 } () },
-        hardware_targets => { map { $_ => 1 } () },
+        version => '13',
+        minimum_from_version => '10.7', # TODO verify against real Install macOS Ventura.app LSMinimumSystemVersion
+        allow => [
+            { type => 'model', values => {
+                'Mac13,1' => 1, 'Mac13,2' => 1, 'Mac14,2' => 1, 'Mac14,7' => 1,
+                'MacBook10,1' => 1, 'MacBookAir10,1' => 1,
+                'MacBookAir8,1' => 1, 'MacBookAir8,2' => 1, 'MacBookAir9,1' => 1,
+                'MacBookPro14,1' => 1, 'MacBookPro14,2' => 1, 'MacBookPro14,3' => 1,
+                'MacBookPro15,1' => 1, 'MacBookPro15,2' => 1, 'MacBookPro15,3' => 1, 'MacBookPro15,4' => 1,
+                'MacBookPro16,1' => 1, 'MacBookPro16,2' => 1, 'MacBookPro16,3' => 1, 'MacBookPro16,4' => 1,
+                'MacBookPro17,1' => 1,
+                'MacBookPro18,1' => 1, 'MacBookPro18,2' => 1, 'MacBookPro18,3' => 1, 'MacBookPro18,4' => 1,
+                'MacPro7,1' => 1, 'Macmini8,1' => 1, 'Macmini9,1' => 1, 'VirtualMac2,1' => 1,
+                'iMac18,1' => 1, 'iMac18,2' => 1, 'iMac18,3' => 1, 'iMac19,1' => 1, 'iMac19,2' => 1,
+                'iMac20,1' => 1, 'iMac20,2' => 1, 'iMac21,1' => 1, 'iMac21,2' => 1,
+                'iMacPro1,1' => 1, 'iSim1,1' => 1,
+            } },
+        ],
     },
     {
         name => 'sonoma',
-        target => '14',
-        minimum => '10.7',
-        models => { map { $_ => 1 } qw(
-        iMac19,1
-        iMac19,2
-        iMac20,1
-        iMac20,2
-        iMac21,1
-        iMac21,2
-        iMacPro1,1
-        iSim1,1
-        Mac13,1
-        Mac13,2
-        Mac14,10
-        Mac14,12
-        Mac14,13
-        Mac14,14
-        Mac14,15
-        Mac14,2
-        Mac14,3
-        Mac14,5
-        Mac14,6
-        Mac14,7
-        Mac14,8
-        Mac14,9
-        Mac15,3
-        Mac15,4
-        Mac15,5
-        Mac15,6
-        Mac15,7
-        Mac15,8
-        Mac15,9
-        MacBookAir10,1
-        MacBookAir8,1
-        MacBookAir8,2
-        MacBookAir9,1
-        MacBookPro15,1
-        MacBookPro15,2
-        MacBookPro15,3
-        MacBookPro15,4
-        MacBookPro16,1
-        MacBookPro16,2
-        MacBookPro16,3
-        MacBookPro16,4
-        MacBookPro17,1
-        MacBookPro18,1
-        MacBookPro18,2
-        MacBookPro18,3
-        MacBookPro18,4
-        Macmini8,1
-        Macmini9,1
-        MacPro7,1
-        VirtualMac2,1
-    ) },
-        boards => { map { $_ => 1 } () },
-        hardware_targets => { map { $_ => 1 } () },
+        version => '14',
+        minimum_from_version => '10.7', # TODO verify against real Install macOS Sonoma.app LSMinimumSystemVersion
+        allow => [
+            { type => 'model', values => {
+                'Mac13,1' => 1, 'Mac13,2' => 1,
+                'Mac14,10' => 1, 'Mac14,12' => 1, 'Mac14,13' => 1, 'Mac14,14' => 1, 'Mac14,15' => 1,
+                'Mac14,2' => 1, 'Mac14,3' => 1, 'Mac14,5' => 1, 'Mac14,6' => 1, 'Mac14,7' => 1,
+                'Mac14,8' => 1, 'Mac14,9' => 1,
+                'Mac15,3' => 1, 'Mac15,4' => 1, 'Mac15,5' => 1, 'Mac15,6' => 1, 'Mac15,7' => 1,
+                'Mac15,8' => 1, 'Mac15,9' => 1,
+                'MacBookAir10,1' => 1, 'MacBookAir8,1' => 1, 'MacBookAir8,2' => 1, 'MacBookAir9,1' => 1,
+                'MacBookPro15,1' => 1, 'MacBookPro15,2' => 1, 'MacBookPro15,3' => 1, 'MacBookPro15,4' => 1,
+                'MacBookPro16,1' => 1, 'MacBookPro16,2' => 1, 'MacBookPro16,3' => 1, 'MacBookPro16,4' => 1,
+                'MacBookPro17,1' => 1,
+                'MacBookPro18,1' => 1, 'MacBookPro18,2' => 1, 'MacBookPro18,3' => 1, 'MacBookPro18,4' => 1,
+                'MacPro7,1' => 1, 'Macmini8,1' => 1, 'Macmini9,1' => 1, 'VirtualMac2,1' => 1,
+                'iMac19,1' => 1, 'iMac19,2' => 1, 'iMac20,1' => 1, 'iMac20,2' => 1,
+                'iMac21,1' => 1, 'iMac21,2' => 1, 'iMacPro1,1' => 1, 'iSim1,1' => 1,
+            } },
+        ],
     },
     {
         name => 'sequoia',
-        target => '15',
-        minimum => '10.7',
-        models => { map { $_ => 1 } qw(
-        iMac19,1
-        iMac19,2
-        iMac20,1
-        iMac20,2
-        iMac21,1
-        iMac21,2
-        iMacPro1,1
-        Mac13,1
-        Mac13,2
-        Mac14,2
-        Mac14,3
-        Mac14,5
-        Mac14,6
-        Mac14,7
-        Mac14,8
-        Mac14,9
-        Mac14,10
-        Mac14,12
-        Mac14,13
-        Mac14,14
-        Mac14,15
-        Mac15,3
-        Mac15,4
-        Mac15,5
-        Mac15,6
-        Mac15,7
-        Mac15,8
-        Mac15,9
-        Mac15,10
-        Mac15,11
-        Mac15,12
-        Mac15,13
-        MacBookAir10,1
-        MacBookAir9,1
-        MacBookPro15,1
-        MacBookPro15,2
-        MacBookPro15,3
-        MacBookPro15,4
-        MacBookPro16,1
-        MacBookPro16,2
-        MacBookPro16,3
-        MacBookPro16,4
-        MacBookPro17,1
-        MacBookPro18,1
-        MacBookPro18,2
-        MacBookPro18,3
-        MacBookPro18,4
-        Macmini8,1
-        Macmini9,1
-        MacPro7,1
-        VirtualMac2,1
-    ) },
-        boards => { map { $_ => 1 } () },
-        hardware_targets => { map { $_ => 1 } () },
+        version => '15',
+        minimum_from_version => '10.7', # TODO verify against real Install macOS Sequoia.app LSMinimumSystemVersion
+        allow => [
+            { type => 'model', values => {
+                'Mac13,1' => 1, 'Mac13,2' => 1,
+                'Mac14,10' => 1, 'Mac14,12' => 1, 'Mac14,13' => 1, 'Mac14,14' => 1, 'Mac14,15' => 1,
+                'Mac14,2' => 1, 'Mac14,3' => 1, 'Mac14,5' => 1, 'Mac14,6' => 1, 'Mac14,7' => 1,
+                'Mac14,8' => 1, 'Mac14,9' => 1,
+                'Mac15,10' => 1, 'Mac15,11' => 1, 'Mac15,12' => 1, 'Mac15,13' => 1,
+                'Mac15,3' => 1, 'Mac15,4' => 1, 'Mac15,5' => 1, 'Mac15,6' => 1, 'Mac15,7' => 1,
+                'Mac15,8' => 1, 'Mac15,9' => 1,
+                'MacBookAir10,1' => 1, 'MacBookAir9,1' => 1,
+                'MacBookPro15,1' => 1, 'MacBookPro15,2' => 1, 'MacBookPro15,3' => 1, 'MacBookPro15,4' => 1,
+                'MacBookPro16,1' => 1, 'MacBookPro16,2' => 1, 'MacBookPro16,3' => 1, 'MacBookPro16,4' => 1,
+                'MacBookPro17,1' => 1,
+                'MacBookPro18,1' => 1, 'MacBookPro18,2' => 1, 'MacBookPro18,3' => 1, 'MacBookPro18,4' => 1,
+                'MacPro7,1' => 1, 'Macmini8,1' => 1, 'Macmini9,1' => 1, 'VirtualMac2,1' => 1,
+                'iMac19,1' => 1, 'iMac19,2' => 1, 'iMac20,1' => 1, 'iMac20,2' => 1,
+                'iMac21,1' => 1, 'iMac21,2' => 1, 'iMacPro1,1' => 1,
+            } },
+        ],
     },
     {
         name => 'tahoe',
-        target => '26',
-        minimum => '10.7',
-        models => { map { $_ => 1 } qw(
-        iMac20,1
-        iMac20,2
-        iMac21,1
-        iMac21,2
-        Mac13,1
-        Mac13,2
-        Mac14,2
-        Mac14,3
-        Mac14,5
-        Mac14,6
-        Mac14,7
-        Mac14,8
-        Mac14,9
-        Mac14,10
-        Mac14,12
-        Mac14,13
-        Mac14,14
-        Mac14,15
-        Mac15,3
-        Mac15,4
-        Mac15,5
-        Mac15,6
-        Mac15,7
-        Mac15,8
-        Mac15,9
-        Mac15,10
-        Mac15,11
-        Mac15,12
-        Mac15,13
-        Mac15,14
-        Mac16,1
-        Mac16,2
-        Mac16,3
-        Mac16,5
-        Mac16,6
-        Mac16,7
-        Mac16,8
-        Mac16,9
-        Mac16,10
-        Mac16,11
-        Mac16,12
-        Mac16,13
-        Mac16,15
-        MacBookAir10,1
-        MacBookPro16,1
-        MacBookPro16,2
-        MacBookPro16,4
-        MacBookPro17,1
-        MacBookPro18,1
-        MacBookPro18,2
-        MacBookPro18,3
-        MacBookPro18,4
-        Macmini9,1
-        MacPro7,1
-        VirtualMac2,1
-    ) },
-        boards => { map { $_ => 1 } () },
-        hardware_targets => { map { $_ => 1 } () },
+        version => '26',
+        minimum_from_version => '10.7', # TODO verify against real Install macOS Tahoe.app LSMinimumSystemVersion
+        allow => [
+            { type => 'model', values => {
+                'Mac13,1' => 1, 'Mac13,2' => 1,
+                'Mac14,10' => 1, 'Mac14,12' => 1, 'Mac14,13' => 1, 'Mac14,14' => 1, 'Mac14,15' => 1,
+                'Mac14,2' => 1, 'Mac14,3' => 1, 'Mac14,5' => 1, 'Mac14,6' => 1, 'Mac14,7' => 1,
+                'Mac14,8' => 1, 'Mac14,9' => 1,
+                'Mac15,10' => 1, 'Mac15,11' => 1, 'Mac15,12' => 1, 'Mac15,13' => 1, 'Mac15,14' => 1,
+                'Mac15,3' => 1, 'Mac15,4' => 1, 'Mac15,5' => 1, 'Mac15,6' => 1, 'Mac15,7' => 1,
+                'Mac15,8' => 1, 'Mac15,9' => 1,
+                'Mac16,1' => 1, 'Mac16,10' => 1, 'Mac16,11' => 1, 'Mac16,12' => 1, 'Mac16,13' => 1,
+                'Mac16,15' => 1, 'Mac16,2' => 1, 'Mac16,3' => 1, 'Mac16,5' => 1, 'Mac16,6' => 1,
+                'Mac16,7' => 1, 'Mac16,8' => 1, 'Mac16,9' => 1,
+                'MacBookAir10,1' => 1,
+                'MacBookPro16,1' => 1, 'MacBookPro16,2' => 1, 'MacBookPro16,4' => 1, 'MacBookPro17,1' => 1,
+                'MacBookPro18,1' => 1, 'MacBookPro18,2' => 1, 'MacBookPro18,3' => 1, 'MacBookPro18,4' => 1,
+                'MacPro7,1' => 1, 'Macmini9,1' => 1, 'VirtualMac2,1' => 1,
+                'iMac20,1' => 1, 'iMac20,2' => 1, 'iMac21,1' => 1, 'iMac21,2' => 1,
+            } },
+        ],
     },
     {
         name => 'goldengate',
-        target => '27',
-        minimum => '10.7',
-        models => { map { $_ => 1 } () },
-        boards => { map { $_ => 1 } () },
-        hardware_targets => { map { $_ => 1 } qw(
-        J180dAP
-        J274AP
-        J293AP
-        J313AP
-        J314cAP
-        J314sAP
-        J316cAP
-        J316sAP
-        J375cAP
-        J375dAP
-        J413AP
-        J414cAP
-        J414sAP
-        J415AP
-        J416cAP
-        J416sAP
-        J433AP
-        J434AP
-        J456AP
-        J457AP
-        J473AP
-        J474sAP
-        J475cAP
-        J475dAP
-        J493AP
-        J504AP
-        J514cAP
-        J514mAP
-        J514sAP
-        J516cAP
-        J516mAP
-        J516sAP
-        J575cAP
-        J575dAP
-        J604AP
-        J613AP
-        J614cAP
-        J614sAP
-        J615AP
-        J616cAP
-        J616sAP
-        J623AP
-        J624AP
-        J700AP
-        J704AP
-        J713AP
-        J714cAP
-        J714sAP
-        J715AP
-        J716cAP
-        J716sAP
-        J773gAP
-        J773sAP
-        J813AP
-        J815AP
-        VMA2MACOSAP
-    ) },
+        version => '27',
+        minimum_from_version => '10.7', # TODO verify against real Install macOS Goldengate.app LSMinimumSystemVersion
+        allow => [
+            { type => 'hardware_target', values => {
+                'J180dAP' => 1, 'J274AP' => 1, 'J293AP' => 1, 'J313AP' => 1,
+                'J314cAP' => 1, 'J314sAP' => 1, 'J316cAP' => 1, 'J316sAP' => 1,
+                'J375cAP' => 1, 'J375dAP' => 1,
+                'J413AP' => 1, 'J414cAP' => 1, 'J414sAP' => 1, 'J415AP' => 1,
+                'J416cAP' => 1, 'J416sAP' => 1, 'J433AP' => 1, 'J434AP' => 1,
+                'J456AP' => 1, 'J457AP' => 1, 'J473AP' => 1, 'J474sAP' => 1,
+                'J475cAP' => 1, 'J475dAP' => 1, 'J493AP' => 1, 'J504AP' => 1,
+                'J514cAP' => 1, 'J514mAP' => 1, 'J514sAP' => 1,
+                'J516cAP' => 1, 'J516mAP' => 1, 'J516sAP' => 1,
+                'J575cAP' => 1, 'J575dAP' => 1, 'J604AP' => 1, 'J613AP' => 1,
+                'J614cAP' => 1, 'J614sAP' => 1, 'J615AP' => 1,
+                'J616cAP' => 1, 'J616sAP' => 1, 'J623AP' => 1, 'J624AP' => 1,
+                'J700AP' => 1, 'J704AP' => 1, 'J713AP' => 1,
+                'J714cAP' => 1, 'J714sAP' => 1, 'J715AP' => 1,
+                'J716cAP' => 1, 'J716sAP' => 1, 'J773gAP' => 1, 'J773sAP' => 1,
+                'J813AP' => 1, 'J815AP' => 1, 'VMA2MACOSAP' => 1,
+            } },
+        ],
+    },
+    {
+        name => 'mountainlion',
+        version => '10.8',
+        minimum_from_version => '10.6.6',
+        minimum_ram_mb => 2048,
+        allow => [
+            { type => 'model', values => {
+                'MacBook5,1' => 1, 'MacBook5,2' => 1, 'MacBook6,1' => 1, 'MacBook7,1' => 1,
+                'MacBookAir2,1' => 1, 'MacBookAir3,1' => 1, 'MacBookAir3,2' => 1,
+                'MacBookAir4,1' => 1, 'MacBookAir4,2' => 1, 'MacBookAir5,1' => 1, 'MacBookAir5,2' => 1,
+                'MacBookPro10,1' => 1,
+                'MacBookPro3,1' => 1, 'MacBookPro4,1' => 1,
+                'MacBookPro5,1' => 1, 'MacBookPro5,2' => 1, 'MacBookPro5,3' => 1,
+                'MacBookPro5,4' => 1, 'MacBookPro5,5' => 1,
+                'MacBookPro6,1' => 1, 'MacBookPro6,2' => 1, 'MacBookPro7,1' => 1,
+                'MacBookPro8,1' => 1, 'MacBookPro8,2' => 1, 'MacBookPro8,3' => 1,
+                'MacBookPro9,1' => 1, 'MacBookPro9,2' => 1,
+                'MacPro3,1' => 1, 'MacPro4,1' => 1, 'MacPro5,1' => 1,
+                'Macmini3,1' => 1, 'Macmini4,1' => 1, 'Macmini5,1' => 1, 'Macmini5,2' => 1, 'Macmini5,3' => 1,
+                'Xserve3,1' => 1,
+                'iMac10,1' => 1, 'iMac11,1' => 1, 'iMac11,2' => 1, 'iMac11,3' => 1,
+                'iMac12,1' => 1, 'iMac12,2' => 1, 'iMac7,1' => 1, 'iMac8,1' => 1, 'iMac9,1' => 1,
+            } },
+        ],
+    },
+    {
+        name => 'mavericks',
+        version => '10.9',
+        minimum_from_version => '10.6.6',
+        minimum_ram_mb => 2048,
+        allow => [
+            { type => 'model', values => {
+                'MacBook5,1' => 1, 'MacBook5,2' => 1, 'MacBook6,1' => 1, 'MacBook7,1' => 1,
+                'MacBookAir2,1' => 1, 'MacBookAir3,1' => 1, 'MacBookAir3,2' => 1,
+                'MacBookAir4,1' => 1, 'MacBookAir4,2' => 1, 'MacBookAir5,1' => 1, 'MacBookAir5,2' => 1,
+                'MacBookAir6,1' => 1, 'MacBookAir6,2' => 1,
+                'MacBookPro10,1' => 1, 'MacBookPro10,2' => 1,
+                'MacBookPro3,1' => 1, 'MacBookPro4,1' => 1,
+                'MacBookPro5,1' => 1, 'MacBookPro5,2' => 1, 'MacBookPro5,3' => 1,
+                'MacBookPro5,4' => 1, 'MacBookPro5,5' => 1,
+                'MacBookPro6,1' => 1, 'MacBookPro6,2' => 1, 'MacBookPro7,1' => 1,
+                'MacBookPro8,1' => 1, 'MacBookPro8,2' => 1, 'MacBookPro8,3' => 1,
+                'MacBookPro9,1' => 1, 'MacBookPro9,2' => 1,
+                'MacPro3,1' => 1, 'MacPro4,1' => 1, 'MacPro5,1' => 1,
+                'Macmini3,1' => 1, 'Macmini4,1' => 1, 'Macmini5,1' => 1, 'Macmini5,2' => 1, 'Macmini5,3' => 1,
+                'Macmini6,1' => 1, 'Macmini6,2' => 1,
+                'Xserve3,1' => 1,
+                'iMac10,1' => 1, 'iMac11,1' => 1, 'iMac11,2' => 1, 'iMac11,3' => 1,
+                'iMac12,1' => 1, 'iMac12,2' => 1, 'iMac13,1' => 1, 'iMac13,2' => 1, 'iMac13,3' => 1,
+                'iMac14,1' => 1, 'iMac14,2' => 1, 'iMac14,3' => 1,
+                'iMac7,1' => 1, 'iMac8,1' => 1, 'iMac9,1' => 1,
+            } },
+        ],
+    },
+    {
+        name => 'yosemite',
+        version => '10.10',
+        minimum_from_version => '10.6.6',
+        minimum_ram_mb => 2048,
+        allow => [
+            { type => 'model', values => {
+                'MacBook5,1' => 1, 'MacBook5,2' => 1, 'MacBook6,1' => 1, 'MacBook7,1' => 1,
+                'MacBookAir2,1' => 1, 'MacBookAir3,1' => 1, 'MacBookAir3,2' => 1,
+                'MacBookAir4,1' => 1, 'MacBookAir4,2' => 1, 'MacBookAir5,1' => 1, 'MacBookAir5,2' => 1,
+                'MacBookAir6,1' => 1, 'MacBookAir6,2' => 1,
+                'MacBookPro10,1' => 1, 'MacBookPro10,2' => 1,
+                'MacBookPro11,1' => 1, 'MacBookPro11,2' => 1, 'MacBookPro11,3' => 1,
+                'MacBookPro3,1' => 1, 'MacBookPro4,1' => 1,
+                'MacBookPro5,1' => 1, 'MacBookPro5,2' => 1, 'MacBookPro5,3' => 1,
+                'MacBookPro5,4' => 1, 'MacBookPro5,5' => 1,
+                'MacBookPro6,1' => 1, 'MacBookPro6,2' => 1, 'MacBookPro7,1' => 1,
+                'MacBookPro8,1' => 1, 'MacBookPro8,2' => 1, 'MacBookPro8,3' => 1,
+                'MacBookPro9,1' => 1, 'MacBookPro9,2' => 1,
+                'MacPro3,1' => 1, 'MacPro4,1' => 1, 'MacPro5,1' => 1, 'MacPro6,1' => 1,
+                'Macmini3,1' => 1, 'Macmini4,1' => 1, 'Macmini5,1' => 1, 'Macmini5,2' => 1, 'Macmini5,3' => 1,
+                'Macmini6,1' => 1, 'Macmini6,2' => 1, 'Macmini7,1' => 1,
+                'Xserve3,1' => 1,
+                'iMac10,1' => 1, 'iMac11,1' => 1, 'iMac11,2' => 1, 'iMac11,3' => 1,
+                'iMac12,1' => 1, 'iMac12,2' => 1, 'iMac13,1' => 1, 'iMac13,2' => 1, 'iMac13,3' => 1,
+                'iMac14,1' => 1, 'iMac14,2' => 1, 'iMac14,3' => 1, 'iMac14,4' => 1, 'iMac15,1' => 1,
+                'iMac7,1' => 1, 'iMac8,1' => 1, 'iMac9,1' => 1,
+            } },
+        ],
+    },
+    {
+        name => 'elcapitan',
+        version => '10.11',
+        minimum_from_version => '10.6.8',
+        minimum_ram_mb => 2048,
+        allow => [
+            { type => 'model', values => {
+                'MacBook5,1' => 1, 'MacBook5,2' => 1, 'MacBook6,1' => 1, 'MacBook7,1' => 1, 'MacBook8,1' => 1,
+                'MacBookAir2,1' => 1, 'MacBookAir3,1' => 1, 'MacBookAir3,2' => 1,
+                'MacBookAir4,1' => 1, 'MacBookAir4,2' => 1, 'MacBookAir5,1' => 1, 'MacBookAir5,2' => 1,
+                'MacBookAir6,1' => 1, 'MacBookAir6,2' => 1, 'MacBookAir7,1' => 1, 'MacBookAir7,2' => 1,
+                'MacBookPro10,1' => 1, 'MacBookPro10,2' => 1,
+                'MacBookPro11,1' => 1, 'MacBookPro11,2' => 1, 'MacBookPro11,3' => 1,
+                'MacBookPro11,4' => 1, 'MacBookPro11,5' => 1, 'MacBookPro12,1' => 1,
+                'MacBookPro3,1' => 1, 'MacBookPro4,1' => 1,
+                'MacBookPro5,1' => 1, 'MacBookPro5,2' => 1, 'MacBookPro5,3' => 1,
+                'MacBookPro5,4' => 1, 'MacBookPro5,5' => 1,
+                'MacBookPro6,1' => 1, 'MacBookPro6,2' => 1, 'MacBookPro7,1' => 1,
+                'MacBookPro8,1' => 1, 'MacBookPro8,2' => 1, 'MacBookPro8,3' => 1,
+                'MacBookPro9,1' => 1, 'MacBookPro9,2' => 1,
+                'MacPro3,1' => 1, 'MacPro4,1' => 1, 'MacPro5,1' => 1, 'MacPro6,1' => 1,
+                'Macmini3,1' => 1, 'Macmini4,1' => 1, 'Macmini5,1' => 1, 'Macmini5,2' => 1, 'Macmini5,3' => 1,
+                'Macmini6,1' => 1, 'Macmini6,2' => 1, 'Macmini7,1' => 1,
+                'Xserve3,1' => 1,
+                'iMac10,1' => 1, 'iMac11,1' => 1, 'iMac11,2' => 1, 'iMac11,3' => 1,
+                'iMac12,1' => 1, 'iMac12,2' => 1, 'iMac13,1' => 1, 'iMac13,2' => 1, 'iMac13,3' => 1,
+                'iMac14,1' => 1, 'iMac14,2' => 1, 'iMac14,3' => 1, 'iMac14,4' => 1, 'iMac15,1' => 1,
+                'iMac7,1' => 1, 'iMac8,1' => 1, 'iMac9,1' => 1,
+            } },
+        ],
+    },
+    {
+        name => 'leopard',
+        version => '10.5',
+        allow => [
+            { type => 'cpu', cpu_type => 'powerpc', cpu_family => 'g4', min_frequency_mhz => 867 },
+            { type => 'cpu', cpu_type => 'powerpc', cpu_family => 'g5' },
+            { type => 'cpu', cpu_type => 'intel' },
+        ],
+    },
+    {
+        name => 'snowleopard',
+        version => '10.6',
+        minimum_from_version => '10.5.8',
+        allow => [
+            { type => 'cpu', cpu_type => 'intel' },
+        ],
+    },
+    {
+        name => 'lion',
+        version => '10.7',
+        minimum_from_version => '10.6.8',
+        allow => [
+            { type => 'cpu', cpu_type => 'intel', cpu_64bit => 1 },
+        ],
     },
 );
 
@@ -970,28 +442,40 @@ sub is_version_at_least {
     return defined($comparison) && $comparison >= 0 ? 1 : 0;
 }
 
-sub _dictionary_value {
-    my ($dictionary, $key) = @_;
-    return '' unless blessed($dictionary) && $$dictionary;
-    my $value = eval {
-        $dictionary->objectForKey_(foundation_string($key));
-    };
-    return objc_string($value);
-}
+# Recursively search a parsed plist tree for the first string (or
+# string-convertible) value under the given key, wherever it appears.
+# Mirrors virtual_type.pl's own tree walk: system_profiler's XML shape
+# nests the field we want a few levels deep, and searching generically
+# is more robust across OS versions than hardcoding that exact path.
+sub _string_for_key_in_object {
+    my ($object, $wanted_key) = @_;
+    return '' unless blessed($object) && $$object;
 
-sub _ioreg_identity {
-    my ($output) = @_;
-    my $plist = parse_plist_output($output);
-    return ('', '') unless blessed($plist) && $$plist;
-    return ('', '') unless $plist->isKindOfClass_(NSArray->class());
-    return ('', '') unless $plist->count();
+    if ($object->isKindOfClass_(NSDictionary->class())) {
+        my $keys = $object->keyEnumerator();
+        while (my $key_object = $keys->nextObject()) {
+            last unless blessed($key_object) && $$key_object;
+            my $value = $object->objectForKey_($key_object);
+            if (objc_string($key_object) eq $wanted_key) {
+                my $text = objc_string($value);
+                return $text if length $text;
+            }
+            my $found = _string_for_key_in_object($value, $wanted_key);
+            return $found if length $found;
+        }
+        return '';
+    }
 
-    my $dictionary = $plist->objectAtIndex_(0);
-    return ('', '') unless blessed($dictionary) && $$dictionary;
-    return (
-        _dictionary_value($dictionary, 'model'),
-        _dictionary_value($dictionary, 'board-id')
-    );
+    if ($object->isKindOfClass_(NSArray->class())) {
+        my $items = $object->objectEnumerator();
+        while (my $item = $items->nextObject()) {
+            last unless blessed($item) && $$item;
+            my $found = _string_for_key_in_object($item, $wanted_key);
+            return $found if length $found;
+        }
+        return '';
+    }
+    return '';
 }
 
 sub _sysctl {
@@ -1004,22 +488,49 @@ sub _sysctl {
     return $output;
 }
 
+sub _cpu_type_name {
+    my ($cputype) = @_;
+    return 'powerpc' if $cputype eq '18';
+    return 'intel' if $cputype eq '7' || $cputype eq '16777223';
+    return 'arm' if $cputype eq '12' || $cputype eq '16777228';
+    return '';
+}
+
+sub _cpu_family_name {
+    my ($cpu_type, $cpusubtype) = @_;
+    return '' unless $cpu_type eq 'powerpc';
+    return 'g3' if $cpusubtype eq '9';
+    return 'g4' if $cpusubtype eq '10' || $cpusubtype eq '11';
+    return 'g5' if $cpusubtype eq '100' || $cpusubtype eq '101' || $cpusubtype eq '102';
+    return '';
+}
+
 sub collect_hardware_snapshot {
     my (%options) = @_;
     my $version = defined($options{version})
         ? $options{version}
         : system_version($options{system_version_path});
 
-    my ($model, $board_id) = ('', '');
-    if (defined $options{ioreg_output}) {
-        ($model, $board_id) = _ioreg_identity($options{ioreg_output});
+    # machine_model comes from the system_profiler call every plugin
+    # already shares (see system_profiler_snapshot in MunkiPerls.pm)
+    # rather than ioreg: system_profiler derives it from the same
+    # underlying IOKit property, so this works identically on every OS
+    # version with no extra process spawned beyond the one
+    # system_profiler_snapshot() already makes. board-id is dropped
+    # entirely - no confirmed evidence it ever diverges from model in
+    # outcome for any machine in this table, so there is no longer any
+    # ioreg call in this function at all.
+    my ($profiler_ok, $profiler_output);
+    if (defined $options{profiler_output}) {
+        ($profiler_ok, $profiler_output) = (1, $options{profiler_output});
     } else {
-        my ($ok, $output) = run_command(
-            {}, '/usr/sbin/ioreg', '-a', '-rd1',
-            '-c', 'IOPlatformExpertDevice'
-        );
-        ($model, $board_id) = _ioreg_identity($output) if $ok;
+        ($profiler_ok, $profiler_output) = system_profiler_snapshot();
     }
+    my $model = $profiler_ok
+        ? _string_for_key_in_object(
+            parse_plist_output($profiler_output), 'machine_model'
+        )
+        : '';
 
     my $sysctl = sub {
         my ($name) = @_;
@@ -1033,6 +544,22 @@ sub collect_hardware_snapshot {
     my $hardware_target = defined($options{hardware_target})
         ? $options{hardware_target}
         : $sysctl->('hw.target');
+
+    my $cpu_type = defined($options{cpu_type})
+        ? $options{cpu_type}
+        : _cpu_type_name($sysctl->('hw.cputype'));
+    my $cpu_family = defined($options{cpu_family})
+        ? $options{cpu_family}
+        : _cpu_family_name($cpu_type, $sysctl->('hw.cpusubtype'));
+    my $cpu_64bit = defined($options{cpu_64bit})
+        ? $options{cpu_64bit}
+        : ($sysctl->('hw.cpu64bit_capable') =~ /\A[1-9]\d*\z/ ? 1 : 0);
+    my $cpu_frequency_mhz = defined($options{cpu_frequency_mhz})
+        ? $options{cpu_frequency_mhz}
+        : int(($sysctl->('hw.cpufrequency') || 0) / 1_000_000);
+    my $ram_mb = defined($options{ram_mb})
+        ? $options{ram_mb}
+        : int(($sysctl->('hw.memsize') || 0) / (1024 * 1024));
 
     my $virtual;
     if (defined $options{is_virtual}) {
@@ -1048,8 +575,12 @@ sub collect_hardware_snapshot {
     return {
         version => $version,
         model => $model,
-        board_id => $board_id,
         hardware_target => $hardware_target,
+        cpu_type => $cpu_type,
+        cpu_family => $cpu_family,
+        cpu_64bit => $cpu_64bit,
+        cpu_frequency_mhz => $cpu_frequency_mhz,
+        ram_mb => $ram_mb,
         is_virtual => $virtual,
     };
 }
@@ -1095,7 +626,7 @@ sub _snapshot_from_cache {
     return unless defined($cached_boot) && $cached_boot eq $boot_identifier;
 
     my %snapshot;
-    for my $key (qw(version model board_id hardware_target)) {
+    for my $key (qw(version model hardware_target cpu_type cpu_family cpu_64bit cpu_frequency_mhz ram_mb)) {
         my $value = _cache_string($cache, $key);
         return unless defined $value;
         $snapshot{$key} = $value;
@@ -1120,7 +651,7 @@ sub _write_snapshot_cache {
         foundation_string($boot_identifier),
         foundation_string('boot_identifier')
     );
-    for my $key (qw(version model board_id hardware_target)) {
+    for my $key (qw(version model hardware_target cpu_type cpu_family cpu_64bit cpu_frequency_mhz ram_mb)) {
         $cache->setObject_forKey_(
             foundation_string(defined($snapshot->{$key}) ? $snapshot->{$key} : ''),
             foundation_string($key)
@@ -1172,19 +703,55 @@ sub cached_hardware_snapshot {
     return $snapshot;
 }
 
+sub _model_matches {
+    my ($condition, $snapshot) = @_;
+    my $model = $snapshot->{model} || '';
+    return 0 unless length $model;
+    return $condition->{values}{$model} ? 1 : 0;
+}
+
+sub _hardware_target_matches {
+    my ($condition, $snapshot) = @_;
+    my $target = $snapshot->{hardware_target} || '';
+    return 0 unless length $target;
+    return $condition->{values}{$target} ? 1 : 0;
+}
+
+sub _cpu_matches {
+    my ($condition, $snapshot) = @_;
+    return 0 unless ($snapshot->{cpu_type} || '') eq ($condition->{cpu_type} || '');
+    if (defined $condition->{cpu_family}) {
+        return 0 unless ($snapshot->{cpu_family} || '') eq $condition->{cpu_family};
+    }
+    if (defined $condition->{min_frequency_mhz}) {
+        return 0 unless ($snapshot->{cpu_frequency_mhz} || 0) >= $condition->{min_frequency_mhz};
+    }
+    if ($condition->{cpu_64bit}) {
+        return 0 unless $snapshot->{cpu_64bit};
+    }
+    return 1;
+}
+
+sub _condition_matches {
+    my ($condition, $snapshot) = @_;
+    if ($condition->{all}) {
+        for my $sub_condition (@{$condition->{all}}) {
+            return 0 unless _condition_matches($sub_condition, $snapshot);
+        }
+        return 1;
+    }
+    my $type = $condition->{type} || '';
+    return _model_matches($condition, $snapshot) if $type eq 'model';
+    return _hardware_target_matches($condition, $snapshot) if $type eq 'hardware_target';
+    return _cpu_matches($condition, $snapshot) if $type eq 'cpu';
+    return 0;
+}
+
 sub _physical_supported {
     my ($release, $snapshot) = @_;
-    my $model = $snapshot->{model} || '';
-    my $board = $snapshot->{board_id} || '';
-    my $target = $snapshot->{hardware_target} || '';
-
-    if ($release->{require_model_and_board}) {
-        return 0 if !length($model) || $release->{blocked_models}{$model};
-        return $release->{boards}{$board} ? 1 : 0;
+    for my $condition (@{$release->{allow} || []}) {
+        return 1 if _condition_matches($condition, $snapshot);
     }
-    return 1 if $release->{models}{$model};
-    return 1 if $release->{boards}{$board};
-    return 1 if $release->{hardware_targets}{$target};
     return 0;
 }
 
@@ -1201,18 +768,33 @@ sub evaluate_upgrade_perl {
     }
     die "Unknown upgrade perl: $key\n" unless $wanted;
 
-    my $at_target = version_compare(
-        $snapshot->{version}, $wanted->{target}
-    );
-    my $at_minimum = version_compare(
-        $snapshot->{version}, $wanted->{minimum}
-    );
+    my $at_target = version_compare($snapshot->{version}, $wanted->{version});
+    # Being there already is not, strictly speaking, an upgrade path -
+    # and it's not useful information either, so it's reported as undef
+    # (omitted by evaluate_upgrade_perls) rather than as false.
+    return undef unless defined $at_target;
+    return undef if $at_target >= 0;
 
-    # Being there already is not, strictly speaking, an upgrade path.
-    return 0 if !defined($at_target) || !defined($at_minimum);
-    return 0 if $at_target >= 0;
-    return 0 if $at_minimum < 0;
+    # minimum_from_version is optional: a release with none imposes no
+    # lower bound (any source version below the target is eligible).
+    # Being below the minimum IS useful information ("you can't jump
+    # straight from Tiger to El Capitan"), so it's reported as explicit
+    # false rather than omitted.
+    if (defined $wanted->{minimum_from_version}) {
+        my $at_minimum = version_compare($snapshot->{version}, $wanted->{minimum_from_version});
+        return 0 if !defined($at_minimum) || $at_minimum < 0;
+    }
+
     return 1 if $snapshot->{is_virtual};
+
+    # minimum_ram_mb is checked after the is_virtual short-circuit above
+    # (unlike minimum_from_version, checked before it): the version floor
+    # is an upgrade-path property that still constrains a VM, while the
+    # RAM floor is a physical-hardware property a VM doesn't share.
+    if (defined $wanted->{minimum_ram_mb}) {
+        return 0 if ($snapshot->{ram_mb} || 0) < $wanted->{minimum_ram_mb};
+    }
+
     return _physical_supported($wanted, $snapshot);
 }
 
@@ -1223,9 +805,53 @@ sub evaluate_upgrade_perls {
     my %perls;
     for my $release (@RELEASES) {
         my $key = $release->{name} . '_upgrade_supported';
-        $perls{$key} = evaluate_upgrade_perl($key, $snapshot);
+        my $result = evaluate_upgrade_perl($key, $snapshot);
+        $perls{$key} = $result if defined $result;
     }
     return \%perls;
+}
+
+# Shared by _highest_version_release (over every release) and
+# highest_supported_macos_version (over just the releases this hardware
+# matches): both want "the highest-version release in this list," they
+# just start from different lists.
+sub _max_by_version {
+    my (@releases) = @_;
+    my $highest;
+    for my $release (@releases) {
+        $highest = $release
+            if !$highest || version_compare($release->{version}, $highest->{version}) > 0;
+    }
+    return $highest;
+}
+
+sub _highest_version_release {
+    return _max_by_version(@RELEASES);
+}
+
+# latest_macos_supported and highest_supported_macos_version are deliberately
+# hardware-capability-only (via _physical_supported) and never consult
+# minimum_ram_mb, so a low-RAM match can overstate the ceiling versus what
+# evaluate_upgrade_perl reports for that specific, RAM-gated release.
+sub latest_macos_supported {
+    my ($snapshot) = @_;
+    die "Hardware snapshot must be a hash reference\n"
+        unless ref($snapshot) eq 'HASH';
+    return 1 if $snapshot->{is_virtual};
+    my $release = _highest_version_release();
+    return 0 unless $release;
+    return _physical_supported($release, $snapshot) ? 1 : 0;
+}
+
+sub highest_supported_macos_version {
+    my ($snapshot) = @_;
+    die "Hardware snapshot must be a hash reference\n"
+        unless ref($snapshot) eq 'HASH';
+    my @matching = grep {
+        $snapshot->{is_virtual} || _physical_supported($_, $snapshot)
+    } @RELEASES;
+    my $highest = _max_by_version(@matching);
+    return $highest ? $highest->{version} : '';
 }
 
 1;

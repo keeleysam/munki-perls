@@ -1,4 +1,4 @@
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 
@@ -6,16 +6,117 @@ use Test::More 'no_plan';
 use lib 'conditions/lib';
 use MunkiPerls::Upgrade qw(
     collect_hardware_snapshot evaluate_upgrade_perl evaluate_upgrade_perls
-    version_compare
+    highest_supported_macos_version latest_macos_supported version_compare
 );
+
+# Exercised directly against _physical_supported via a synthetic release,
+# not through the real @RELEASES table - these test the matcher dispatch
+# itself, independent of any real release's data. A leading underscore is
+# just a naming convention in Perl, not access control, so a fully
+# qualified call works with no special syntax needed.
+ok(MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'model', values => { 'iMac14,1' => 1 } } ] },
+    { model => 'iMac14,1' },
+), 'model condition matches when snapshot model is in values');
+ok(!MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'model', values => { 'iMac14,1' => 1 } } ] },
+    { model => 'iMac15,1' },
+), 'model condition rejects when snapshot model is not in values');
+
+ok(MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'hardware_target', values => { 'J293AP' => 1 } } ] },
+    { hardware_target => 'J293AP' },
+), 'hardware_target condition matches when snapshot target is in values');
+ok(!MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'hardware_target', values => { 'J293AP' => 1 } } ] },
+    { hardware_target => '' },
+), 'hardware_target condition rejects an empty snapshot target');
+
+ok(MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'cpu', cpu_type => 'intel' } ] },
+    { cpu_type => 'intel', cpu_family => '', cpu_64bit => 0, cpu_frequency_mhz => 0 },
+), 'cpu condition with only cpu_type matches any speed or family');
+ok(!MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'cpu', cpu_type => 'intel' } ] },
+    { cpu_type => 'powerpc', cpu_family => 'g5', cpu_64bit => 0, cpu_frequency_mhz => 2000 },
+), 'cpu condition rejects a different cpu_type');
+ok(MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'cpu', cpu_type => 'powerpc', cpu_family => 'g4', min_frequency_mhz => 867 } ] },
+    { cpu_type => 'powerpc', cpu_family => 'g4', cpu_64bit => 0, cpu_frequency_mhz => 867 },
+), 'cpu condition min_frequency_mhz matches at the exact boundary');
+ok(!MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'cpu', cpu_type => 'powerpc', cpu_family => 'g4', min_frequency_mhz => 867 } ] },
+    { cpu_type => 'powerpc', cpu_family => 'g4', cpu_64bit => 0, cpu_frequency_mhz => 800 },
+), 'cpu condition rejects below min_frequency_mhz');
+ok(MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'cpu', cpu_type => 'powerpc', cpu_family => 'g5' } ] },
+    { cpu_type => 'powerpc', cpu_family => 'g5', cpu_64bit => 0, cpu_frequency_mhz => 2000 },
+), 'cpu condition with no min_frequency_mhz matches any speed for that family');
+ok(MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'cpu', cpu_type => 'intel', cpu_64bit => 1 } ] },
+    { cpu_type => 'intel', cpu_family => '', cpu_64bit => 1, cpu_frequency_mhz => 2000 },
+), 'cpu condition cpu_64bit matches a 64-bit-capable snapshot');
+ok(!MunkiPerls::Upgrade::_physical_supported(
+    { allow => [ { type => 'cpu', cpu_type => 'intel', cpu_64bit => 1 } ] },
+    { cpu_type => 'intel', cpu_family => '', cpu_64bit => 0, cpu_frequency_mhz => 2000 },
+), 'cpu condition cpu_64bit rejects a 32-bit-only snapshot');
+
+ok(MunkiPerls::Upgrade::_physical_supported(
+    {
+        allow => [
+            { type => 'model', values => { 'MacPro5,1' => 1 } },
+            { all => [
+                { type => 'model', values => { 'Mac16,7' => 1 } },
+                { type => 'cpu', cpu_type => 'intel' },
+            ] },
+        ],
+    },
+    { model => 'MacPro5,1', cpu_type => 'powerpc' },
+), 'allow list OR: matches via the first entry even though the second would fail');
+ok(MunkiPerls::Upgrade::_physical_supported(
+    {
+        allow => [
+            { type => 'model', values => { 'MacPro5,1' => 1 } },
+            { all => [
+                { type => 'model', values => { 'Mac16,7' => 1 } },
+                { type => 'cpu', cpu_type => 'intel' },
+            ] },
+        ],
+    },
+    { model => 'Mac16,7', cpu_type => 'intel' },
+), 'allow list OR: matches via the second (all-composite) entry even though the first would fail');
+ok(!MunkiPerls::Upgrade::_physical_supported(
+    {
+        allow => [
+            { all => [
+                { type => 'model', values => { 'Mac16,7' => 1 } },
+                { type => 'cpu', cpu_type => 'intel' },
+            ] },
+        ],
+    },
+    { model => 'Mac16,7', cpu_type => 'powerpc' },
+), 'all composite: model matches but cpu does not, so the whole condition fails');
+
+my $survived = eval {
+    MunkiPerls::Upgrade::_physical_supported(
+        { allow => [ { type => 'nonsense' } ] },
+        {},
+    );
+    1;
+};
+ok($survived, 'unknown condition type does not crash the process');
 
 sub perls {
     my (%overrides) = @_;
     return evaluate_upgrade_perls({
         version => '10.13.6',
         model => 'MacBookPro9,1',
-        board_id => 'Mac-06F11F11946D27C5',
         hardware_target => '',
+        cpu_type => 'intel',
+        cpu_family => '',
+        cpu_64bit => 1,
+        cpu_frequency_mhz => 2000,
+        ram_mb => 8192,
         is_virtual => 0,
         %overrides,
     });
@@ -24,28 +125,27 @@ sub perls {
 is(version_compare('10.15.7', '11'), -1, '10.15 sorts below 11');
 is(version_compare('26.0', '16'), 1, 'Tahoe major 26 is not treated as 16');
 
-ok(perls(version => '10.7')->{sierra_upgrade_supported}, 'Sierra lower boundary supported');
+ok(perls(version => '10.7.5')->{sierra_upgrade_supported}, 'Sierra lower boundary supported');
 ok(perls(version => '10.11.6')->{sierra_upgrade_supported}, 'Sierra upper source boundary supported');
 ok(!perls(version => '10.6.8', is_virtual => 1)->{sierra_upgrade_supported}, 'Sierra rejects below minimum before VM');
 ok(!perls(version => '10.12', is_virtual => 1)->{sierra_upgrade_supported}, 'Sierra rejects already-upgraded VM');
 ok(!perls(version => '10.13')->{sierra_upgrade_supported}, 'Sierra rejects systems above target');
 ok(perls(
-    version => '10.11.6', model => 'unsupported',
-    board_id => 'unsupported', is_virtual => 1,
+    version => '10.11.6', model => 'unsupported', is_virtual => 1,
 )->{sierra_upgrade_supported}, 'Sierra permits an eligible VM');
 ok(!perls(model => 'MacBookPro5,1')->{sierra_upgrade_supported}, 'Sierra rejects original blocked model');
-ok(!perls(board_id => 'unsupported')->{sierra_upgrade_supported}, 'Sierra requires original board table');
+ok(!perls(model => 'unsupported')->{sierra_upgrade_supported}, 'Sierra requires a supported model');
 ok(perls(
-    version => '10.11.6', model => 'MacBookPro9,1',
-    board_id => 'Mac-4B7AC7E43945597E',
-)->{sierra_upgrade_supported}, 'Sierra accepts supported model and board combination');
+    version => '10.11.6', model => 'iMac14,1',
+)->{sierra_upgrade_supported}, 'Sierra accepts a second real supported model');
 
-ok(perls(version => '10.7')->{mojave_upgrade_supported}, 'Mojave lower boundary supported');
+ok(perls(version => '10.8')->{mojave_upgrade_supported}, 'Mojave lower boundary supported');
 ok(perls(version => '10.13.6')->{mojave_upgrade_supported}, 'Mojave upper source boundary supported');
 ok(!perls(version => '10.6.8', is_virtual => 1)->{mojave_upgrade_supported}, 'Mojave rejects below minimum before VM');
 ok(!perls(version => '10.14', is_virtual => 1)->{mojave_upgrade_supported}, 'Mojave rejects already-upgraded VM');
 ok(!perls(model => 'MacBookPro8,2')->{mojave_upgrade_supported}, 'Mojave rejects original blocked model');
-ok(!perls(board_id => 'unsupported')->{mojave_upgrade_supported}, 'Mojave requires original board table');
+ok(!perls(model => 'unsupported')->{mojave_upgrade_supported}, 'Mojave requires a supported model');
+ok(perls(model => 'MacPro5,1')->{mojave_upgrade_supported}, 'Mojave still allows MacPro5,1 (GPU caveat not modeled yet)');
 
 ok(!perls(version => '10.8.5', is_virtual => 1)->{catalina_upgrade_supported}, 'Catalina rejects below minimum before VM');
 ok(perls(version => '10.9', is_virtual => 1)->{catalina_upgrade_supported}, 'Catalina lower boundary VM supported');
@@ -55,6 +155,9 @@ ok(!perls(version => '10.14', model => 'MacPro5,1')->{catalina_upgrade_supported
 
 ok(perls(version => '10.15', model => 'MacBook8,1')->{bigsur_upgrade_supported}, 'Big Sur supported model retained');
 ok(!perls(version => '11', is_virtual => 1)->{bigsur_upgrade_supported}, 'Big Sur rejects already-upgraded VM');
+ok(perls(version => '10.15', model => 'MacBookAir9,1')->{bigsur_upgrade_supported}, 'Big Sur includes the newly-added MacBookAir9,1 gap fix');
+ok(perls(version => '10.15', model => 'MacBookPro16,2')->{bigsur_upgrade_supported}, 'Big Sur includes the newly-added MacBookPro16,2 gap fix');
+ok(perls(version => '10.15', model => 'iMac20,1')->{bigsur_upgrade_supported}, 'Big Sur includes the newly-added iMac20,1 gap fix');
 ok(perls(version => '11', model => 'iMacPro1,1')->{monterey_upgrade_supported}, 'Monterey includes iMacPro1,1');
 
 ok(perls(version => '14', model => 'MacBookPro16,3')->{sequoia_upgrade_supported}, 'Sequoia retains MacBookPro16,3');
@@ -64,6 +167,19 @@ ok(!perls(version => '26', model => 'MacBookPro16,4', is_virtual => 1)->{tahoe_u
 
 ok(perls(version => '26', hardware_target => 'J180dAP')->{goldengate_upgrade_supported}, 'Goldengate hardware target supported');
 ok(!perls(version => '27', hardware_target => 'J180dAP', is_virtual => 1)->{goldengate_upgrade_supported}, 'Goldengate rejects target-version VM');
+
+ok(perls(version => '10.6.6', model => 'iMac9,1')->{mountainlion_upgrade_supported}, 'Mountain Lion lower boundary and real model supported');
+ok(!perls(version => '10.8', model => 'iMac9,1', is_virtual => 1)->{mountainlion_upgrade_supported}, 'Mountain Lion rejects already-upgraded VM');
+ok(!perls(version => '10.7', model => 'iMac9,1', ram_mb => 1024)->{mountainlion_upgrade_supported}, 'Mountain Lion rejects insufficient RAM');
+ok(perls(version => '10.7', model => 'iMac9,1', ram_mb => 2048)->{mountainlion_upgrade_supported}, 'Mountain Lion accepts the exact RAM boundary');
+
+ok(perls(version => '10.6.6', model => 'MacBookAir6,2')->{mavericks_upgrade_supported}, 'Mavericks accepts a real supported model');
+ok(!perls(version => '10.6.5', model => 'MacBookAir6,2')->{mavericks_upgrade_supported}, 'Mavericks rejects below minimum');
+
+ok(perls(version => '10.6.6', model => 'Macmini7,1')->{yosemite_upgrade_supported}, 'Yosemite accepts a real supported model');
+
+ok(perls(version => '10.6.8', model => 'MacBook8,1')->{elcapitan_upgrade_supported}, 'El Capitan accepts a real supported model');
+ok(!perls(version => '10.6.6', model => 'MacBook8,1')->{elcapitan_upgrade_supported}, 'El Capitan requires its own higher minimum (10.6.8, not 10.6.6)');
 
 for my $boundary (
     ['sierra_upgrade_supported', '10.11', '10.12'],
@@ -82,7 +198,7 @@ for my $boundary (
 
 my $pre_bigsur_vm = collect_hardware_snapshot(
     version => '10.15.7',
-    ioreg_output => 'not a plist',
+    profiler_output => 'not a plist',
     sysctl_values => {
         'hw.target' => '',
         'machdep.cpu.features' => 'SSE4 VMM AVX',
@@ -92,7 +208,7 @@ ok($pre_bigsur_vm->{is_virtual}, 'pre-Big-Sur VMM feature means virtual');
 
 my $pre_bigsur_physical = collect_hardware_snapshot(
     version => '10.15.7',
-    ioreg_output => 'not a plist',
+    profiler_output => 'not a plist',
     sysctl_values => {
         'hw.target' => '',
         'machdep.cpu.features' => 'SSE4 AVX',
@@ -102,7 +218,7 @@ ok(!$pre_bigsur_physical->{is_virtual}, 'pre-Big-Sur system without VMM is physi
 
 my $modern_vm = collect_hardware_snapshot(
     version => '11.0',
-    ioreg_output => 'not a plist',
+    profiler_output => 'not a plist',
     sysctl_values => {
         'hw.target' => '',
         'kern.hv_vmm_present' => '1',
@@ -110,21 +226,114 @@ my $modern_vm = collect_hardware_snapshot(
 );
 ok($modern_vm->{is_virtual}, 'Big Sur and newer use kern.hv_vmm_present');
 
-is(scalar(keys %{perls()}), 10, 'consolidated evaluator emits ten upgrade perls');
+my $profiler_fixture = qq{<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+    <dict>
+        <key>_dataType</key>
+        <string>SPConfigurationProfileDataType</string>
+    </dict>
+    <dict>
+        <key>_dataType</key>
+        <string>SPHardwareDataType</string>
+        <key>_items</key>
+        <array>
+            <dict>
+                <key>_name</key>
+                <string>hardware_overview</string>
+                <key>machine_model</key>
+                <string>Mac99,9</string>
+            </dict>
+        </array>
+    </dict>
+</array>
+</plist>};
+
+my $tiger_snapshot = collect_hardware_snapshot(
+    version => '10.4.11',
+    profiler_output => $profiler_fixture,
+    sysctl_values => {
+        'hw.target' => '', 'machdep.cpu.features' => '',
+        'hw.cputype' => '18', 'hw.cpusubtype' => '100',
+        'hw.cpu64bit_capable' => '0', 'hw.cpufrequency' => '2000000004',
+        'hw.memsize' => '2147483648',
+    },
+);
+is($tiger_snapshot->{model}, 'Mac99,9', 'hardware identity model comes from system_profiler on any OS version');
+ok(!exists $tiger_snapshot->{board_id}, 'the snapshot no longer has a board_id field at all');
+is($tiger_snapshot->{cpu_type}, 'powerpc', 'cpu_type is read from hw.cputype');
+is($tiger_snapshot->{cpu_family}, 'g5', 'cpu_family is read from hw.cpusubtype (970/G5 constant)');
+is($tiger_snapshot->{cpu_64bit}, 0, 'cpu_64bit is read from hw.cpu64bit_capable');
+is($tiger_snapshot->{cpu_frequency_mhz}, 2000, 'cpu_frequency_mhz is hw.cpufrequency converted from Hz to MHz');
+is($tiger_snapshot->{ram_mb}, 2048, 'ram_mb is hw.memsize converted from bytes to MB');
+
+my $intel_snapshot = collect_hardware_snapshot(
+    version => '15.0',
+    profiler_output => $profiler_fixture,
+    sysctl_values => {
+        'hw.target' => '', 'kern.hv_vmm_present' => '',
+        'hw.cputype' => '7', 'hw.cpusubtype' => '0',
+        'hw.cpu64bit_capable' => '1', 'hw.cpufrequency' => '3200000000',
+        'hw.memsize' => '17179869184',
+    },
+);
+is($intel_snapshot->{cpu_type}, 'intel', 'cpu_type maps CPU_TYPE_X86 to intel');
+is($intel_snapshot->{cpu_family}, '', 'cpu_family is empty for non-PowerPC hardware');
+is($intel_snapshot->{cpu_64bit}, 1, 'cpu_64bit is truthy when hw.cpu64bit_capable is 1');
+
+my $arm_snapshot = collect_hardware_snapshot(
+    version => '15.0',
+    profiler_output => $profiler_fixture,
+    sysctl_values => {
+        'hw.target' => 'J413AP', 'kern.hv_vmm_present' => '',
+        'hw.cputype' => '16777228', 'hw.cpusubtype' => '2',
+        'hw.cpu64bit_capable' => '1', 'hw.cpufrequency' => '0',
+        'hw.memsize' => '17179869184',
+    },
+);
+is($arm_snapshot->{cpu_type}, 'arm', 'cpu_type maps CPU_TYPE_ARM64 to arm');
+
+ok(!defined(evaluate_upgrade_perl('sierra_upgrade_supported', { version => '10.12', is_virtual => 1 })),
+    'a release already at its own target returns undef, not false');
+ok(!defined(evaluate_upgrade_perl('sierra_upgrade_supported', { version => '10.13', is_virtual => 1 })),
+    'a release already past its target returns undef, not false');
+is(evaluate_upgrade_perl('sierra_upgrade_supported', { version => '10.6', is_virtual => 1 }), 0,
+    'a release below minimum_from_version still returns explicit false, not undef');
+is(evaluate_upgrade_perl('sierra_upgrade_supported', {
+    version => '10.11.6', model => 'MacBookPro9,1',
+}), 1, 'an eligible release still returns explicit true');
+
+my $old_os_perls = perls(version => '10.6');
+ok(exists $old_os_perls->{sierra_upgrade_supported}, 'an old OS still gets the sierra key (below every target)');
+ok(exists $old_os_perls->{goldengate_upgrade_supported}, 'an old OS still gets the goldengate key too');
+
+my $new_os_perls = perls(version => '27');
+ok(!exists $new_os_perls->{sierra_upgrade_supported}, 'a bleeding-edge OS omits sierra (already long past)');
+ok(!exists $new_os_perls->{goldengate_upgrade_supported}, 'a bleeding-edge OS omits goldengate too (already at it)');
+is(scalar(keys %{$new_os_perls}), 0, 'a bleeding-edge OS gets zero upgrade_supported keys at all');
+
+ok(perls(
+    version => '10.11.6', model => 'MacBookPro9,1', ram_mb => 1,
+)->{sierra_upgrade_supported}, 'sanity: minimum_ram_mb does not affect a release that does not declare one (sierra ignores an absurdly low ram_mb)');
+
+is(scalar(keys %{perls(version => '10.4')}), 17, 'consolidated evaluator now emits all seventeen upgrade perls for an OS below every target');
 
 for my $snapshot (
     {
-        version => '10.13.6', model => 'MacBookPro9,1',
-        board_id => 'Mac-06F11F11946D27C5', hardware_target => '',
-        is_virtual => 0,
+        version => '10.13.6', model => 'MacBookPro9,1', hardware_target => '',
+        cpu_type => 'intel', cpu_family => '', cpu_64bit => 1,
+        cpu_frequency_mhz => 2000, ram_mb => 8192, is_virtual => 0,
     },
     {
-        version => '14', model => 'unsupported', board_id => 'unsupported',
-        hardware_target => 'unsupported', is_virtual => 1,
+        version => '14', model => 'unsupported', hardware_target => 'unsupported',
+        cpu_type => 'intel', cpu_family => '', cpu_64bit => 1,
+        cpu_frequency_mhz => 2000, ram_mb => 8192, is_virtual => 1,
     },
     {
-        version => '26', model => 'MacBookPro16,4', board_id => '',
-        hardware_target => 'J180dAP', is_virtual => 0,
+        version => '26', model => 'MacBookPro16,4', hardware_target => 'J180dAP',
+        cpu_type => 'arm', cpu_family => '', cpu_64bit => 1,
+        cpu_frequency_mhz => 0, ram_mb => 16384, is_virtual => 0,
     },
 ) {
     my $aggregate = evaluate_upgrade_perls($snapshot);
@@ -144,3 +353,61 @@ my $unknown = eval {
     1;
 };
 ok(!$unknown, 'single-perl evaluator rejects unknown keys');
+
+ok(latest_macos_supported({ version => '27', hardware_target => 'J180dAP', is_virtual => 0 }),
+    'a machine matching the newest release is latest-supported');
+ok(!latest_macos_supported({ version => '27', model => 'unsupported', hardware_target => 'unsupported', is_virtual => 0 }),
+    'a machine matching nothing in the newest release is not latest-supported');
+ok(latest_macos_supported({ version => '10.4.11', is_virtual => 1 }),
+    'a VM is always latest-supported regardless of current OS version');
+
+is(highest_supported_macos_version({ model => 'MacBookPro9,1', is_virtual => 0 }), '10.15',
+    'a machine eligible up through Catalina (but not Big Sur) reports 10.15 as its ceiling');
+is(highest_supported_macos_version({ hardware_target => 'J180dAP', is_virtual => 0 }), '27',
+    'a machine matching the newest release reports its version as the ceiling');
+is(highest_supported_macos_version({ model => 'unsupported', hardware_target => 'unsupported', is_virtual => 0 }), '',
+    'a machine matching nothing at all reports an empty ceiling');
+is(highest_supported_macos_version({ is_virtual => 1 }), '27',
+    'a VM reports the newest release as its ceiling regardless of current OS version');
+
+my $goldengate_beta = { version => '27', hardware_target => 'J180dAP', is_virtual => 0 };
+ok(!exists evaluate_upgrade_perls($goldengate_beta)->{goldengate_upgrade_supported},
+    'a machine already on the newest release gets no per-release keys');
+ok(latest_macos_supported($goldengate_beta), 'but latest_macos_supported still reports true for it');
+is(highest_supported_macos_version($goldengate_beta), '27', 'and highest_supported_macos_version still reports its real ceiling');
+
+# These all pin an explicit version below the release's own target (and,
+# where one exists, at/above its minimum_from_version): the shared perls()
+# helper's default version (10.13.6) is already past leopard/snowleopard/
+# lion's targets, which would make evaluate_upgrade_perl return undef
+# (already-upgraded semantics) rather than the boolean these assertions
+# are actually trying to exercise.
+ok(perls(version => '10.4', cpu_type => 'powerpc', cpu_family => 'g4', cpu_frequency_mhz => 867)->{leopard_upgrade_supported},
+    'Leopard accepts a G4 at exactly the 867MHz boundary');
+ok(!perls(version => '10.4', cpu_type => 'powerpc', cpu_family => 'g4', cpu_frequency_mhz => 800)->{leopard_upgrade_supported},
+    'Leopard rejects a G4 below the 867MHz boundary');
+ok(perls(version => '10.4', cpu_type => 'powerpc', cpu_family => 'g5', cpu_frequency_mhz => 1)->{leopard_upgrade_supported},
+    'Leopard accepts any G5 speed at all');
+ok(!perls(version => '10.4', cpu_type => 'powerpc', cpu_family => 'g3', cpu_frequency_mhz => 900)->{leopard_upgrade_supported},
+    'Leopard rejects a G3 regardless of speed');
+ok(perls(version => '10.4', cpu_type => 'intel')->{leopard_upgrade_supported}, 'Leopard accepts any Intel Mac');
+
+ok(perls(version => '10.5.8', cpu_type => 'intel')->{snowleopard_upgrade_supported}, 'Snow Leopard accepts any Intel Mac');
+ok(!perls(version => '10.5.8', cpu_type => 'powerpc', cpu_family => 'g5', cpu_frequency_mhz => 2500)->{snowleopard_upgrade_supported},
+    'Snow Leopard rejects PowerPC entirely, even a fast G5');
+ok(!perls(version => '10.5', cpu_type => 'intel')->{snowleopard_upgrade_supported},
+    'Snow Leopard rejects below its own minimum (10.5.8)');
+
+ok(perls(version => '10.6.8', cpu_type => 'intel', cpu_64bit => 1)->{lion_upgrade_supported}, 'Lion accepts a 64-bit-capable Intel Mac');
+ok(!perls(version => '10.6.8', cpu_type => 'intel', cpu_64bit => 0)->{lion_upgrade_supported},
+    'Lion rejects an original 32-bit-only Core Duo/Solo Intel Mac');
+
+is(scalar(keys %{perls(version => '10.1')}), 17, 'consolidated evaluator now emits all seventeen upgrade perls');
+
+# The real point of this whole branch of work: a real PowerPC G5's actual
+# sysctl readings (confirmed on the Tiger test hardware: hw.cputype=18,
+# hw.cpusubtype=100, hw.cpufrequency=2000000004) should show Leopard
+# eligible while still running Tiger.
+ok(perls(
+    version => '10.4.11', cpu_type => 'powerpc', cpu_family => 'g5', cpu_frequency_mhz => 2000,
+)->{leopard_upgrade_supported}, 'a real Tiger-era G5 snapshot reports Leopard as upgrade-supported');

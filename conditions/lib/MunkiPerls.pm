@@ -1,6 +1,6 @@
 package MunkiPerls;
 
-use 5.008008;
+use 5.008006;
 use strict;
 use warnings;
 
@@ -19,8 +19,8 @@ our @EXPORT_OK = qw(
     perl_array perl_bool perl_dictionary perl_integer perl_real perl_string
     foundation_array foundation_dictionary foundation_string
     load_plist_file managed_install_dir objc_string parse_plist_output
-    run_command run_condition serialize_plist system_version
-    validate_perls write_perls write_plist_file
+    run_command run_condition serialize_plist system_profiler_snapshot
+    system_version validate_perls write_perls write_plist_file
 );
 
 use constant NS_PROPERTY_LIST_MUTABLE_CONTAINERS => 1;
@@ -413,6 +413,37 @@ sub run_command {
     waitpid($pid, 0);
     my $status = $?;
     return ($status == 0 ? 1 : 0, defined($output) ? $output : '', $status);
+}
+
+my @SYSTEM_PROFILER_DATA_TYPES = qw(
+    SPConfigurationProfileDataType SPEthernetDataType SPHardwareDataType
+);
+my $SYSTEM_PROFILER_CACHE;
+
+# Every condition perl that wants system_profiler data asks for a subset of
+# the same handful of data types; requesting the full union once per process
+# and letting each caller pick its own keys out of the combined result means
+# munki_perls.pl's one process-wide run only pays system_profiler's (slow,
+# relative to ioreg) startup cost once, no matter how many plugins need it.
+#
+# It's safe to request a data type that doesn't apply to the current OS
+# (e.g. SPConfigurationProfileDataType, which predates Lion): verified on
+# both Mac OS X 10.4 Tiger and current macOS that system_profiler exits 0
+# and returns an empty placeholder for that type rather than failing the
+# whole call or disturbing the other requested types' results.
+sub system_profiler_snapshot {
+    my (%options) = @_;
+    return @{$SYSTEM_PROFILER_CACHE} if $SYSTEM_PROFILER_CACHE;
+
+    my $runner = $options{runner} || sub {
+        return run_command(
+            {}, '/usr/sbin/system_profiler', '-xml',
+            @SYSTEM_PROFILER_DATA_TYPES
+        );
+    };
+    my ($ok, $output) = $runner->();
+    $SYSTEM_PROFILER_CACHE = [$ok, $output];
+    return ($ok, $output);
 }
 
 sub _usage {
