@@ -110,10 +110,11 @@ for my $key (@bundled_keys) {
 }
 
 for my $key (qw(
-    bigsur_upgrade_supported catalina_upgrade_supported goldengate_upgrade_supported
-    mojave_upgrade_supported monterey_upgrade_supported sequoia_upgrade_supported
-    sierra_upgrade_supported sonoma_upgrade_supported tahoe_upgrade_supported
-    ventura_upgrade_supported
+    bigsur_upgrade_supported catalina_upgrade_supported elcapitan_upgrade_supported
+    goldengate_upgrade_supported mavericks_upgrade_supported
+    mojave_upgrade_supported monterey_upgrade_supported mountainlion_upgrade_supported
+    sequoia_upgrade_supported sierra_upgrade_supported sonoma_upgrade_supported
+    tahoe_upgrade_supported ventura_upgrade_supported yosemite_upgrade_supported
 )) {
     my $value = $plist->objectForKey_(foundation_string($key));
     next unless blessed($value) && $$value;

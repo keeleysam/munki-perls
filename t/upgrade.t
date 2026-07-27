@@ -168,6 +168,19 @@ ok(!perls(version => '26', model => 'MacBookPro16,4', is_virtual => 1)->{tahoe_u
 ok(perls(version => '26', hardware_target => 'J180dAP')->{goldengate_upgrade_supported}, 'Goldengate hardware target supported');
 ok(!perls(version => '27', hardware_target => 'J180dAP', is_virtual => 1)->{goldengate_upgrade_supported}, 'Goldengate rejects target-version VM');
 
+ok(perls(version => '10.6.6', model => 'iMac9,1')->{mountainlion_upgrade_supported}, 'Mountain Lion lower boundary and real model supported');
+ok(!perls(version => '10.8', model => 'iMac9,1', is_virtual => 1)->{mountainlion_upgrade_supported}, 'Mountain Lion rejects already-upgraded VM');
+ok(!perls(version => '10.7', model => 'iMac9,1', ram_mb => 1024)->{mountainlion_upgrade_supported}, 'Mountain Lion rejects insufficient RAM');
+ok(perls(version => '10.7', model => 'iMac9,1', ram_mb => 2048)->{mountainlion_upgrade_supported}, 'Mountain Lion accepts the exact RAM boundary');
+
+ok(perls(version => '10.6.6', model => 'MacBookAir6,2')->{mavericks_upgrade_supported}, 'Mavericks accepts a real supported model');
+ok(!perls(version => '10.6.5', model => 'MacBookAir6,2')->{mavericks_upgrade_supported}, 'Mavericks rejects below minimum');
+
+ok(perls(version => '10.6.6', model => 'Macmini7,1')->{yosemite_upgrade_supported}, 'Yosemite accepts a real supported model');
+
+ok(perls(version => '10.6.8', model => 'MacBook8,1')->{elcapitan_upgrade_supported}, 'El Capitan accepts a real supported model');
+ok(!perls(version => '10.6.6', model => 'MacBook8,1')->{elcapitan_upgrade_supported}, 'El Capitan requires its own higher minimum (10.6.8, not 10.6.6)');
+
 for my $boundary (
     ['sierra_upgrade_supported', '10.11', '10.12'],
     ['bigsur_upgrade_supported', '10.15', '11'],
@@ -304,7 +317,7 @@ ok(perls(
     version => '10.11.6', model => 'MacBookPro9,1', ram_mb => 1,
 )->{sierra_upgrade_supported}, 'sanity: minimum_ram_mb does not affect a release that does not declare one (sierra ignores an absurdly low ram_mb)');
 
-is(scalar(keys %{perls(version => '10.6')}), 10, 'consolidated evaluator emits all ten upgrade perls for an OS below every target');
+is(scalar(keys %{perls(version => '10.6')}), 14, 'consolidated evaluator now emits fourteen upgrade perls for an OS below every target');
 
 for my $snapshot (
     {
