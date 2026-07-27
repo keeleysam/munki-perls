@@ -1,0 +1,71 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: "en-US"
+early_access: false
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!dist/**"
+    - "!package-lock.json"
+    - "!**/*.png"
+    - "!**/*.webp"
+  path_instructions:
+    - path: "conditions/**"
+      instructions: |
+        This code must remain compatible with Perl 5.8.8 and the Foundation and
+        PerlObjCBridge modules supplied with Mac OS X 10.5.8. Flag syntax,
+        built-ins, dependencies, or APIs introduced after Perl 5.8.8. Do not
+        recommend CPAN dependencies or replacing native plist values with
+        stringly typed output.
+
+        Pay particular attention to command execution, input validation, file
+        ownership and permissions, symlink handling, locking, and atomic plist
+        replacement. Commands must use the project's strict absolute-path
+        allowlist and list-form execution; flag shell interpolation or leakage
+        of collected values into diagnostics. Preserve each plugin's documented
+        key names, native plist types, fallback values, and failure isolation.
+    - path: "conditions/perls/*_upgrade_supported.pl"
+      instructions: |
+        Check hardware model lists and version comparisons carefully. Preserve
+        support for older Macs and both Intel and PowerPC where the documented
+        compatibility matrix requires it. Require focused regression tests when
+        compatibility data or decision logic changes.
+    - path: "t/**"
+      instructions: |
+        Tests must run with Test::More on Perl 5.8.8. Flag post-5.8.8 test syntax,
+        nondeterministic platform assumptions, and changes that weaken coverage
+        of plist types, plugin isolation, package layout, permissions, or command
+        policy. Prefer regression tests that demonstrate the behavior being
+        changed.
+    - path: "tools/**"
+      instructions: |
+        Review package contents, modes, ownership, signing behavior, generated
+        device data, and argument handling. Flag unsafe shell construction,
+        non-reproducible output, or accidental inclusion of local configuration
+        and secrets. Perl tools must remain compatible with Perl 5.8.8.
+    - path: ".github/workflows/**"
+      instructions: |
+        Check least-privilege permissions, untrusted pull-request input, secret
+        handling, action pinning, matrix coverage, and release gating. A release
+        must only run from main after both the current-Perl and exact-Perl-5.8.8
+        test jobs succeed.
+    - path: "site/**"
+      instructions: |
+        Check accessibility, responsive behavior, semantic HTML, and consistency
+        with the README and actual command-line behavior. The dist directory is
+        generated and must not be edited or committed.
+    - path: "README.md"
+      instructions: |
+        Verify commands, paths, supported macOS and Perl versions, plugin keys,
+        plist types, and security claims against the implementation and tests.
+
+chat:
+  auto_reply: true
