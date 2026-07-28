@@ -90,7 +90,7 @@ run_or_die(
 # downstream, not the installer, not Leopard, not a G5 that has never
 # heard of zopfli, needs to know or care that it was used. Every byte
 # counts, and this one is free.
-my $zopfli = find_zopfli();
+my $zopfli = resolve_zopfli();
 if ($zopfli) {
     squeeze_payload($built, $zopfli, $workspace, $verbose);
 } elsif ($verbose) {
@@ -122,22 +122,44 @@ sub find_zopfli {
     return undef;
 }
 
-sub pipe_to_file {
-    my ($command, $destination) = @_;
-    open(my $source_fh, '-|', @{$command})
-        or die "Could not start $command->[0]\n";
+# MUNKI_PERLS_ZOPFLI lets a caller (CI, namely) pin the exact binary it just
+# downloaded, checksummed, and built, instead of trusting whatever a plain
+# PATH search happens to turn up. A CI job that verifies its own zopfli
+# should never silently fall through to some other same-named binary that
+# happened to already be sitting on the runner's PATH; if the verified build
+# failed, the job sets this to empty, and that means "none available", full
+# stop, not "go look around for a substitute". Local development, where
+# there is no such trust boundary and no such CI step, keeps working exactly
+# as documented: whatever is on PATH is used, with no environment variable
+# required.
+sub resolve_zopfli {
+    return find_zopfli() unless exists $ENV{MUNKI_PERLS_ZOPFLI};
+    my $pinned = $ENV{MUNKI_PERLS_ZOPFLI};
+    return (length($pinned) && -f $pinned && -x _) ? $pinned : undef;
+}
+
+sub stream_to_file {
+    my ($source_fh, $destination, $source_label) = @_;
     binmode $source_fh;
     open(my $destination_fh, '>', $destination)
         or die "Could not create $destination\n";
     binmode $destination_fh;
     while (1) {
         my $count = read($source_fh, my $buffer, 65536);
-        die "Could not read from $command->[0]\n" unless defined $count;
+        die "Could not read from $source_label\n" unless defined $count;
         last if $count == 0;
         print {$destination_fh} $buffer
             or die "Could not write $destination\n";
     }
     close $destination_fh or die "Could not close $destination\n";
+    return;
+}
+
+sub pipe_to_file {
+    my ($command, $destination) = @_;
+    open(my $source_fh, '-|', @{$command})
+        or die "Could not start $command->[0]\n";
+    stream_to_file($source_fh, $destination, $command->[0]);
     close $source_fh or die "$command->[0] failed\n";
     return;
 }
@@ -203,19 +225,8 @@ sub copy_file {
     # Copy the bytes, not the source file's personal history.
     open(my $source_fh, '<', $source_path)
         or die "Could not open payload source\n";
-    open(my $destination_fh, '>', $destination_path)
-        or die "Could not create staged payload file\n";
-    binmode $source_fh;
-    binmode $destination_fh;
-    while (1) {
-        my $count = read($source_fh, my $buffer, 65536);
-        die "Could not read payload source\n" unless defined $count;
-        last if $count == 0;
-        print {$destination_fh} $buffer
-            or die "Could not write staged payload file\n";
-    }
+    stream_to_file($source_fh, $destination_path, $source_path);
     close $source_fh or die "Could not close payload source\n";
-    close $destination_fh or die "Could not close staged payload file\n";
 }
 
 sub usage {
