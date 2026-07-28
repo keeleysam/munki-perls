@@ -37,6 +37,7 @@ jobs:
         # tools are enough. Every byte counts, but not enough to fail the
         # build over: if any of this doesn't work, build-pkg.pl just ships
         # pkgbuild's own gzip, exactly as if this step had never run.
+        id: zopfli
         continue-on-error: true
         env:
           ZOPFLI_TARBALL_SHA256: 09a9732e11975455921a7ec22cad75ca42ed3ea4c9cbe3ccff09750a77e03bcb
@@ -51,7 +52,7 @@ jobs:
           make -C "$RUNNER_TEMP/zopfli-$commit" zopfli
           mkdir -p "$RUNNER_TEMP/bin"
           cp "$RUNNER_TEMP/zopfli-$commit/zopfli" "$RUNNER_TEMP/bin/zopfli"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          echo "bin=$RUNNER_TEMP/bin/zopfli" >> "$GITHUB_OUTPUT"
       - name: Syntax check
         run: |
           while IFS= read -r file; do
@@ -59,8 +60,18 @@ jobs:
           done < <(find conditions tools t -type f \
             \( -name '*.pl' -o -name '*.pm' -o -name '*.t' \) -print)
       - name: Test
+        # build-pkg.pl's own test suite (t/package.t) exercises zopfli
+        # discovery through PATH directly, which is the documented local-
+        # dev behavior; it does not need or use MUNKI_PERLS_ZOPFLI.
         run: /usr/bin/prove -lr t
       - name: Build and inspect package
+        env:
+          # Passed explicitly rather than adding the built binary to PATH:
+          # if the "Build zopfli from source" step above failed, this output
+          # is empty, and build-pkg.pl must treat that as "zopfli is not
+          # available", not go looking for some other same-named binary
+          # that might already be reachable on the runner's PATH.
+          MUNKI_PERLS_ZOPFLI: ${{ steps.zopfli.outputs.bin }}
         run: |
           tools/build-pkg.pl --output "$RUNNER_TEMP/munki-perls-0.1.0.pkg"
           /usr/sbin/pkgutil --expand "$RUNNER_TEMP/munki-perls-0.1.0.pkg" "$RUNNER_TEMP/expanded"
@@ -229,6 +240,7 @@ jobs:
       - name: Build zopfli from source
         # See the perl-latest job for why this builds from a pinned source
         # commit instead of relying on Homebrew's deprecated formula.
+        id: zopfli
         continue-on-error: true
         env:
           ZOPFLI_TARBALL_SHA256: 09a9732e11975455921a7ec22cad75ca42ed3ea4c9cbe3ccff09750a77e03bcb
@@ -243,7 +255,7 @@ jobs:
           make -C "$RUNNER_TEMP/zopfli-$commit" zopfli
           mkdir -p "$RUNNER_TEMP/bin"
           cp "$RUNNER_TEMP/zopfli-$commit/zopfli" "$RUNNER_TEMP/bin/zopfli"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          echo "bin=$RUNNER_TEMP/bin/zopfli" >> "$GITHUB_OUTPUT"
       - name: Import package signing certificate
         env:
           INSTALLER_CERTIFICATE_P12: ${{ secrets.INSTALLER_CERTIFICATE_P12 }}
@@ -269,6 +281,11 @@ jobs:
           security list-keychains -d user -s "$keychain"
           rm -f "$certificate"
       - name: Build release package
+        env:
+          # See the perl-latest job: passed explicitly rather than via
+          # PATH, so a failed zopfli build can't be silently substituted
+          # with some other same-named binary already on the runner.
+          MUNKI_PERLS_ZOPFLI: ${{ steps.zopfli.outputs.bin }}
         run: |
           tools/build-pkg.pl \
             --version "${{ steps.release.outputs.version }}" \

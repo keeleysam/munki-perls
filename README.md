@@ -432,6 +432,14 @@ now also squeezes the installer a little harder than strictly necessary.
 Every byte counts. When `zopfli` isn't installed, the build proceeds exactly
 as before; this is a bonus, not a requirement.
 
+Setting `MUNKI_PERLS_ZOPFLI=/path/to/zopfli` pins the exact binary to use and
+skips the `PATH` search entirely, including the fallback: an empty or
+nonexistent path means "not available," not "go look around for something
+else with the same name." CI sets this to the binary it just downloaded,
+checksummed, and built for itself, rather than trusting whatever else might
+already be sitting on the runner's `PATH`. Everyday local use doesn't need
+it; a `zopfli` on `PATH` is picked up automatically.
+
 After all three Perl-version jobs pass, every push to `main` uses the
 workflow run number to build version `0.1.N`, creates tag `v0.1.N`, and
 publishes the package on a GitHub Release. Re-running the workflow replaces

@@ -82,15 +82,27 @@ ok(
     'package contains no postinstall script'
 );
 
-sub build_with_path {
-    my ($output_path, $path) = @_;
+sub build_with_env {
+    my ($output_path, $env) = @_;
     my $log = "$output_path.build.log";
     my $status;
     {
         local *SAVEERR;
         open(SAVEERR, '>&STDERR') or die "Could not save STDERR: $!";
         open(STDERR, '>', $log) or die "Could not redirect STDERR: $!";
-        local $ENV{PATH} = $path;
+
+        local $ENV{PATH} = $env->{PATH} if exists $env->{PATH};
+
+        # Always pinned one way or the other, never left to whatever the
+        # invoking shell happens to already have set, so these tests exercise
+        # exactly the override behavior they claim to and nothing ambient.
+        local $ENV{MUNKI_PERLS_ZOPFLI};
+        if (exists $env->{MUNKI_PERLS_ZOPFLI}) {
+            $ENV{MUNKI_PERLS_ZOPFLI} = $env->{MUNKI_PERLS_ZOPFLI};
+        } else {
+            delete $ENV{MUNKI_PERLS_ZOPFLI};
+        }
+
         $status = system {
             $^X
         } $^X, 'tools/build-pkg.pl', '--version', '0.1.43',
@@ -103,6 +115,11 @@ sub build_with_path {
     my $log_contents = <$log_fh>;
     close $log_fh;
     return ($status, $log_contents);
+}
+
+sub build_with_path {
+    my ($output_path, $path) = @_;
+    return build_with_env($output_path, { PATH => $path });
 }
 
 sub payload_size {
@@ -129,10 +146,10 @@ sub payload_matches_source {
     return defined($decompressed) && index($decompressed, 'MunkiPerls') >= 0;
 }
 
-my $has_zopfli = grep {
-    my $candidate = File::Spec->catfile($_, 'zopfli');
-    -f $candidate && -x _;
+my ($zopfli_path) = grep { -f $_ && -x _ } map {
+    File::Spec->catfile($_, 'zopfli')
 } File::Spec->path();
+my $has_zopfli = defined $zopfli_path;
 
 # Forcing a bare PATH exercises the "zopfli is not installed" fallback
 # deterministically, rather than depending on whether the test host
@@ -176,5 +193,52 @@ SKIP: {
     cmp_ok(
         $squeezed_size, '<', $fallback_size,
         'zopfli payload is smaller than the plain gzip payload'
+    );
+}
+
+SKIP: {
+    # These specifically exercise MUNKI_PERLS_ZOPFLI, the override CI uses
+    # to pin its own verified binary instead of letting build-pkg.pl go
+    # searching PATH for a substitute. All three need a real zopfli on PATH
+    # to be a meaningful test of "the override wins regardless of PATH".
+    skip 'zopfli is not installed on this host', 3 unless $has_zopfli;
+
+    my $blank_override_package = "$directory/blank-override-0.1.43.pkg";
+    my (undef, $blank_override_log) = build_with_env(
+        $blank_override_package,
+        { PATH => $ENV{PATH}, MUNKI_PERLS_ZOPFLI => '' }
+    );
+    like(
+        $blank_override_log,
+        qr/zopfli not found/,
+        'a blank override is treated as unavailable even with zopfli on PATH'
+    );
+
+    my $bogus_override_package = "$directory/bogus-override-0.1.43.pkg";
+    my (undef, $bogus_override_log) = build_with_env(
+        $bogus_override_package,
+        {
+            PATH => $ENV{PATH},
+            MUNKI_PERLS_ZOPFLI => '/nonexistent/zopfli',
+        }
+    );
+    like(
+        $bogus_override_log,
+        qr/zopfli not found/,
+        'a nonexistent override path does not fall back to a PATH search'
+    );
+
+    my $pinned_package = "$directory/pinned-0.1.43.pkg";
+    my (undef, $pinned_log) = build_with_env(
+        $pinned_package,
+        {
+            PATH => '/usr/bin:/usr/sbin:/bin:/sbin',
+            MUNKI_PERLS_ZOPFLI => $zopfli_path,
+        }
+    );
+    like(
+        $pinned_log,
+        qr/zopfli saved \d+ bytes/,
+        'an explicit override is used even when PATH alone would find nothing'
     );
 }
