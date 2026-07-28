@@ -55,7 +55,7 @@ implementation need not be an event.
 | **Output** | Munki's configured `ManagedInstallDir/ConditionalItems.plist` |
 | **Dependencies** | Apple's stock Perl, `Foundation`, and `PerlObjCBridge` |
 | **Writes** | Sidecar-locked and atomically replaced through Foundation |
-| **Distribution** | Unsigned `.pkg` from each successful `main` release |
+| **Distribution** | Developer ID-signed `.pkg` from each successful `main` release |
 
 ## What it knows
 
