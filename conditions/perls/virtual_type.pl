@@ -79,11 +79,21 @@ sub virtual_type {
     return $ok ? _virtual_machine_type($output) : 'unknown';
 }
 
+sub physical_or_virtual {
+    my ($snapshot) = @_;
+    return $snapshot->{is_virtual} ? 'virtual' : 'physical';
+}
+
 sub perls {
     my ($context) = @_;
     my $snapshot = cached_hardware_snapshot($context->{output_path});
-    return { virtual_type => perl_string(
-        virtual_type(hardware_snapshot => $snapshot)
-    ) };
+    return {
+        virtual_type => perl_string(
+            virtual_type(hardware_snapshot => $snapshot)
+        ),
+        physical_or_virtual => perl_string(
+            physical_or_virtual($snapshot)
+        ),
+    };
 }
 1;

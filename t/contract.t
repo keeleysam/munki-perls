@@ -131,7 +131,9 @@ $status = system {
 is($status, 0, '--only virtual_type selects the bundled plugin');
 
 my $only_plist = load_plist_file($only_output, dictionary => 1);
-is($only_plist->count(), 1, '--only virtual_type writes one key');
+# virtual_type.pl also contributes physical_or_virtual, since the two are
+# the same underlying hardware-snapshot check reported at two granularities.
+is($only_plist->count(), 2, '--only virtual_type writes both of its keys');
 my $only_value = $only_plist->objectForKey_(
     foundation_string('virtual_type')
 );
@@ -139,4 +141,12 @@ ok(
     blessed($only_value) && $$only_value
         && $only_value->isKindOfClass_(NSString->class()),
     '--only virtual_type writes a string'
+);
+my $only_sibling_value = $only_plist->objectForKey_(
+    foundation_string('physical_or_virtual')
+);
+ok(
+    blessed($only_sibling_value) && $$only_sibling_value
+        && $only_sibling_value->isKindOfClass_(NSString->class()),
+    '--only virtual_type also writes its sibling key physical_or_virtual'
 );

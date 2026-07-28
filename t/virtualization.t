@@ -12,11 +12,10 @@ use MunkiPerls qw(
 use MunkiPerls::Plugins qw(load_plugin);
 
 my $virtual_plugin = load_plugin('conditions/perls/virtual_type.pl');
-my $physical_plugin = load_plugin('conditions/perls/physical_or_virtual.pl');
 my $virtual_type = $virtual_plugin->{package}->can('virtual_type');
 my $physical_or_virtual =
-    $physical_plugin->{package}->can('physical_or_virtual');
-die "virtualization plugins are missing collectors\n"
+    $virtual_plugin->{package}->can('physical_or_virtual');
+die "virtualization plugin is missing collectors\n"
     unless $virtual_type && $physical_or_virtual;
 
 sub profiler_fixture {
