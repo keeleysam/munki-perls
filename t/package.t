@@ -142,8 +142,15 @@ sub payload_matches_source {
     binmode $cpio;
     local $/;
     my $decompressed = <$cpio>;
-    close $cpio;
-    return defined($decompressed) && index($decompressed, 'MunkiPerls') >= 0;
+    # close(), not just a successful read, catches gzip exiting nonzero
+    # partway through, which a truncated stream could otherwise still
+    # satisfy the content checks below by sheer luck of what came first.
+    return 0 unless close $cpio;
+    return 0 unless defined($decompressed) && index($decompressed, 'MunkiPerls') >= 0;
+    # A cpio archive's trailer entry is the format's own end-of-archive
+    # marker; requiring it catches truncation that lands after the first
+    # match above but before the archive actually finished.
+    return index($decompressed, 'TRAILER!!!') >= 0;
 }
 
 my ($zopfli_path) = grep { -f $_ && -x _ } map {
@@ -177,7 +184,7 @@ ok(
 );
 
 SKIP: {
-    skip 'zopfli is not installed on this host', 3 unless $has_zopfli;
+    skip 'zopfli is not installed on this host', 4 unless $has_zopfli;
 
     my $squeezed_package = "$directory/squeezed-0.1.43.pkg";
     my ($squeezed_status, $squeezed_log) = build_with_path(
@@ -188,6 +195,10 @@ SKIP: {
         $squeezed_log,
         qr/zopfli saved \d+ bytes/,
         'zopfli savings are reported when it runs'
+    );
+    ok(
+        payload_matches_source($squeezed_package, "$directory/squeezed-expanded"),
+        'squeezed payload decompresses to the real payload contents too'
     );
 
     my $fallback_size = payload_size(
@@ -207,27 +218,34 @@ SKIP: {
     # to pin its own verified binary instead of letting build-pkg.pl go
     # searching PATH for a substitute. All three need a real zopfli on PATH
     # to be a meaningful test of "the override wins regardless of PATH".
-    skip 'zopfli is not installed on this host', 3 unless $has_zopfli;
+    skip 'zopfli is not installed on this host', 9 unless $has_zopfli;
 
     my $blank_override_package = "$directory/blank-override-0.1.43.pkg";
-    my (undef, $blank_override_log) = build_with_env(
+    my ($blank_override_status, $blank_override_log) = build_with_env(
         $blank_override_package,
         { PATH => $ENV{PATH}, MUNKI_PERLS_ZOPFLI => '' }
     );
+    is($blank_override_status, 0, 'a blank override still builds successfully');
+    ok(-f $blank_override_package, 'a blank override still produces a package');
     like(
         $blank_override_log,
         qr/zopfli not found/,
         'a blank override is treated as unavailable even with zopfli on PATH'
     );
 
+    # Test-owned and guaranteed absent, rather than assuming no host ever
+    # has anything at a fixed path like /nonexistent/zopfli.
+    my $missing_override_path = "$directory/no-such-zopfli";
     my $bogus_override_package = "$directory/bogus-override-0.1.43.pkg";
-    my (undef, $bogus_override_log) = build_with_env(
+    my ($bogus_override_status, $bogus_override_log) = build_with_env(
         $bogus_override_package,
         {
             PATH => $ENV{PATH},
-            MUNKI_PERLS_ZOPFLI => '/nonexistent/zopfli',
+            MUNKI_PERLS_ZOPFLI => $missing_override_path,
         }
     );
+    is($bogus_override_status, 0, 'a nonexistent override still builds successfully');
+    ok(-f $bogus_override_package, 'a nonexistent override still produces a package');
     like(
         $bogus_override_log,
         qr/zopfli not found/,
@@ -235,13 +253,15 @@ SKIP: {
     );
 
     my $pinned_package = "$directory/pinned-0.1.43.pkg";
-    my (undef, $pinned_log) = build_with_env(
+    my ($pinned_status, $pinned_log) = build_with_env(
         $pinned_package,
         {
             PATH => '/usr/bin:/usr/sbin:/bin:/sbin',
             MUNKI_PERLS_ZOPFLI => $zopfli_path,
         }
     );
+    is($pinned_status, 0, 'a pinned override still builds successfully');
+    ok(-f $pinned_package, 'a pinned override still produces a package');
     like(
         $pinned_log,
         qr/zopfli saved \d+ bytes/,
