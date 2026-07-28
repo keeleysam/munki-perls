@@ -405,9 +405,9 @@ npm run preview   # serve the production output
 Foundation, validates and deduplicates `SupportedDeviceModels`, and prints a
 sorted Perl `qw(...)` table.
 
-`tools/build-pkg.pl` stages the payload with native Perl file APIs and invokes
-only `/usr/bin/pkgbuild`. The tool is Perl 5.8.6-compatible, but packages must
-be built on a newer host that provides `pkgbuild`; Tiger and Leopard are
+`tools/build-pkg.pl` stages the payload with native Perl file APIs and hands
+it to `/usr/bin/pkgbuild`. The tool is Perl 5.8.6-compatible, but packages
+must be built on a newer host that provides `pkgbuild`; Tiger and Leopard are
 supported installation targets, not package build hosts, and asking a G5 to
 run `pkgbuild` would be a poor use of everyone's afternoon. By default it
 creates an unsigned package with identifier `com.github.weswhet.munki-perls`,
@@ -420,6 +420,17 @@ tools/build-pkg.pl --version 0.1.42 \
   --sign "Developer ID Installer: Wesley Whetstone (2D8XQ77EBQ)" \
   --output /tmp/munki-perls-0.1.42.pkg
 ```
+
+If `zopfli` is on `PATH`, the built package's payload gets a second pass:
+unpacked, recompressed with zopfli's considerably more stubborn DEFLATE
+search, verified byte-for-byte against the original before it's trusted, and
+repacked. The output is still perfectly ordinary gzip, so nothing downstream
+needs to know or care, it just arrives a few hundred bytes lighter. This
+project has diligently reduced how many system commands it shells out to,
+consolidated how many times it asks `system_profiler` the same question, and
+now also squeezes the installer a little harder than strictly necessary.
+Every byte counts. When `zopfli` isn't installed, the build proceeds exactly
+as before; this is a bonus, not a requirement.
 
 After all three Perl-version jobs pass, every push to `main` uses the
 workflow run number to build version `0.1.N`, creates tag `v0.1.N`, and

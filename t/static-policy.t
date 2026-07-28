@@ -84,8 +84,11 @@ my %approved = map { $_ => 1 } qw(
     /usr/bin/csrutil
     /usr/bin/dscl
     /usr/bin/fdesetup
+    /usr/bin/gzip
     /usr/bin/pkgbuild
+    /usr/bin/productsign
     /usr/sbin/ioreg
+    /usr/sbin/pkgutil
     /usr/sbin/scutil
     /usr/sbin/spctl
     /usr/sbin/sysctl

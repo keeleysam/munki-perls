@@ -2,6 +2,7 @@ use 5.008006;
 use strict;
 use warnings;
 
+use File::Spec;
 use File::Temp qw(tempdir);
 use Test::More;
 
@@ -80,3 +81,100 @@ ok(
     !-e "$expanded/Scripts/postinstall",
     'package contains no postinstall script'
 );
+
+sub build_with_path {
+    my ($output_path, $path) = @_;
+    my $log = "$output_path.build.log";
+    my $status;
+    {
+        local *SAVEERR;
+        open(SAVEERR, '>&STDERR') or die "Could not save STDERR: $!";
+        open(STDERR, '>', $log) or die "Could not redirect STDERR: $!";
+        local $ENV{PATH} = $path;
+        $status = system {
+            $^X
+        } $^X, 'tools/build-pkg.pl', '--version', '0.1.43',
+            '--output', $output_path, '--verbose';
+        open(STDERR, '>&SAVEERR') or die "Could not restore STDERR: $!";
+        close SAVEERR;
+    }
+    open(my $log_fh, '<', $log) or die $!;
+    local $/;
+    my $log_contents = <$log_fh>;
+    close $log_fh;
+    return ($status, $log_contents);
+}
+
+sub payload_size {
+    my ($package_path, $expand_into) = @_;
+    my $status = system {
+        '/usr/sbin/pkgutil'
+    } '/usr/sbin/pkgutil', '--expand', $package_path, $expand_into;
+    die "pkgutil could not expand $package_path\n" if $status != 0;
+    return (stat("$expand_into/Payload"))[7];
+}
+
+sub payload_matches_source {
+    my ($package_path, $expand_into) = @_;
+    my $status = system {
+        '/usr/sbin/pkgutil'
+    } '/usr/sbin/pkgutil', '--expand', $package_path, $expand_into;
+    return 0 if $status != 0;
+    open(my $cpio, '-|', '/usr/bin/gzip', '-dc', "$expand_into/Payload")
+        or return 0;
+    binmode $cpio;
+    local $/;
+    my $decompressed = <$cpio>;
+    close $cpio;
+    return defined($decompressed) && index($decompressed, 'MunkiPerls') >= 0;
+}
+
+my $has_zopfli = grep {
+    my $candidate = File::Spec->catfile($_, 'zopfli');
+    -f $candidate && -x _;
+} File::Spec->path();
+
+# Forcing a bare PATH exercises the "zopfli is not installed" fallback
+# deterministically, rather than depending on whether the test host
+# happens to have it. Every CI runner takes this branch unless zopfli was
+# explicitly installed for the release job.
+my $fallback_package = "$directory/fallback-0.1.43.pkg";
+my ($fallback_status, $fallback_log) = build_with_path(
+    $fallback_package, '/usr/bin:/usr/sbin:/bin:/sbin'
+);
+is($fallback_status, 0, 'package still builds with zopfli unavailable');
+like(
+    $fallback_log,
+    qr/zopfli not found/,
+    'missing zopfli is reported, not silently ignored'
+);
+ok(
+    payload_matches_source($fallback_package, "$directory/fallback-expanded"),
+    'fallback payload decompresses to the real payload contents'
+);
+
+SKIP: {
+    skip 'zopfli is not installed on this host', 3 unless $has_zopfli;
+
+    my $squeezed_package = "$directory/squeezed-0.1.43.pkg";
+    my ($squeezed_status, $squeezed_log) = build_with_path(
+        $squeezed_package, $ENV{PATH}
+    );
+    is($squeezed_status, 0, 'package builds with zopfli available');
+    like(
+        $squeezed_log,
+        qr/zopfli saved \d+ bytes/,
+        'zopfli savings are reported when it runs'
+    );
+
+    my $fallback_size = payload_size(
+        $fallback_package, "$directory/fallback-payload-check"
+    );
+    my $squeezed_size = payload_size(
+        $squeezed_package, "$directory/squeezed-payload-check"
+    );
+    cmp_ok(
+        $squeezed_size, '<', $fallback_size,
+        'zopfli payload is smaller than the plain gzip payload'
+    );
+}
