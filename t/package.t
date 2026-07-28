@@ -63,11 +63,17 @@ like(
     qr{\./perls/upgrade_supported\.pl\s+100644\b},
     'package contains the consolidated upgrade-eligibility plugin'
 );
-unlike(
-    $listing,
-    qr{\./perls/sierra_upgrade_supported\.pl},
-    'package excludes the retired one-file-per-release upgrade plugins'
-);
+for my $retired (qw(
+    bigsur catalina elcapitan goldengate leopard lion mavericks mojave
+    monterey mountainlion sequoia sierra snowleopard sonoma tahoe ventura
+    yosemite
+)) {
+    unlike(
+        $listing,
+        qr{\./perls/\Q$retired\E_upgrade_supported\.pl\b},
+        "package excludes the retired $retired-only upgrade plugin"
+    );
+}
 unlike($listing, qr{\./system_extensions\.pl}, 'legacy top-level plugins are absent');
 unlike($listing, qr{\./macos_upgrade_supported\.pl}, 'package excludes removed aggregate upgrade condition');
 like($listing, qr{\./lib/MunkiPerls\.pm}, 'package contains shared Foundation runtime');
@@ -136,21 +142,27 @@ sub payload_size {
     return (stat("$expand_into/Payload"))[7];
 }
 
-sub payload_matches_source {
+sub decompressed_payload {
     my ($package_path, $expand_into) = @_;
     my $status = system {
         '/usr/sbin/pkgutil'
     } '/usr/sbin/pkgutil', '--expand', $package_path, $expand_into;
-    return 0 if $status != 0;
+    return undef if $status != 0;
     open(my $cpio, '-|', '/usr/bin/gzip', '-dc', "$expand_into/Payload")
-        or return 0;
+        or return undef;
     binmode $cpio;
     local $/;
     my $decompressed = <$cpio>;
     # close(), not just a successful read, catches gzip exiting nonzero
     # partway through, which a truncated stream could otherwise still
     # satisfy the content checks below by sheer luck of what came first.
-    return 0 unless close $cpio;
+    return undef unless close $cpio;
+    return $decompressed;
+}
+
+sub payload_matches_source {
+    my ($package_path, $expand_into) = @_;
+    my $decompressed = decompressed_payload($package_path, $expand_into);
     return 0 unless defined($decompressed) && index($decompressed, 'MunkiPerls') >= 0;
     # A cpio archive's trailer entry is the format's own end-of-archive
     # marker; requiring it catches truncation that lands after the first
