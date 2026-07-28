@@ -29,10 +29,29 @@ jobs:
       - uses: actions/checkout@v7
       - name: Verify runner architecture
         run: test "$(uname -m)" = "${{ matrix.architecture }}"
-      - name: Install zopfli
-        # Every byte counts, but not enough to fail the build over: if this
-        # step doesn't work, build-pkg.pl just ships pkgbuild's own gzip.
-        run: brew install zopfli || true
+      - name: Build zopfli from source
+        # Homebrew's zopfli formula is deprecated (upstream google/zopfli is
+        # archived) and due to be disabled, so this builds the zopfli-1.0.3
+        # tag directly instead of depending on that formula's lifecycle.
+        # It's a small, dependency-free C project; Xcode's command line
+        # tools are enough. Every byte counts, but not enough to fail the
+        # build over: if any of this doesn't work, build-pkg.pl just ships
+        # pkgbuild's own gzip, exactly as if this step had never run.
+        continue-on-error: true
+        env:
+          ZOPFLI_TARBALL_SHA256: 09a9732e11975455921a7ec22cad75ca42ed3ea4c9cbe3ccff09750a77e03bcb
+        run: |
+          commit=bd64b2f0553d4f1ef4e6627647c5d9fc8c71ffc0
+          archive="$RUNNER_TEMP/zopfli-src.tar.gz"
+          curl --fail --location --silent --show-error \
+            --output "$archive" \
+            "https://github.com/google/zopfli/archive/$commit.tar.gz"
+          printf '%s  %s\n' "$ZOPFLI_TARBALL_SHA256" "$archive" | shasum -a 256 --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          make -C "$RUNNER_TEMP/zopfli-$commit" zopfli
+          mkdir -p "$RUNNER_TEMP/bin"
+          cp "$RUNNER_TEMP/zopfli-$commit/zopfli" "$RUNNER_TEMP/bin/zopfli"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Syntax check
         run: |
           while IFS= read -r file; do
@@ -207,8 +226,24 @@ jobs:
           version="0.1.${GITHUB_RUN_NUMBER}"
           printf 'version=%s\ntag=v%s\npackage=%s/munki-perls-%s.pkg\n' \
             "$version" "$version" "$RUNNER_TEMP" "$version" >> "$GITHUB_OUTPUT"
-      - name: Install zopfli
-        run: brew install zopfli || true
+      - name: Build zopfli from source
+        # See the perl-latest job for why this builds from a pinned source
+        # commit instead of relying on Homebrew's deprecated formula.
+        continue-on-error: true
+        env:
+          ZOPFLI_TARBALL_SHA256: 09a9732e11975455921a7ec22cad75ca42ed3ea4c9cbe3ccff09750a77e03bcb
+        run: |
+          commit=bd64b2f0553d4f1ef4e6627647c5d9fc8c71ffc0
+          archive="$RUNNER_TEMP/zopfli-src.tar.gz"
+          curl --fail --location --silent --show-error \
+            --output "$archive" \
+            "https://github.com/google/zopfli/archive/$commit.tar.gz"
+          printf '%s  %s\n' "$ZOPFLI_TARBALL_SHA256" "$archive" | shasum -a 256 --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          make -C "$RUNNER_TEMP/zopfli-$commit" zopfli
+          mkdir -p "$RUNNER_TEMP/bin"
+          cp "$RUNNER_TEMP/zopfli-$commit/zopfli" "$RUNNER_TEMP/bin/zopfli"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Import package signing certificate
         env:
           INSTALLER_CERTIFICATE_P12: ${{ secrets.INSTALLER_CERTIFICATE_P12 }}
