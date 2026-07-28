@@ -60,8 +60,13 @@ unlike(
 );
 like(
     $listing,
-    qr{\./perls/sierra_upgrade_supported\.pl\s+100644\b},
-    'package contains non-executable split upgrade plugins'
+    qr{\./perls/upgrade_supported\.pl\s+100644\b},
+    'package contains the consolidated upgrade-eligibility plugin'
+);
+unlike(
+    $listing,
+    qr{\./perls/sierra_upgrade_supported\.pl},
+    'package excludes the retired one-file-per-release upgrade plugins'
 );
 unlike($listing, qr{\./system_extensions\.pl}, 'legacy top-level plugins are absent');
 unlike($listing, qr{\./macos_upgrade_supported\.pl}, 'package excludes removed aggregate upgrade condition');

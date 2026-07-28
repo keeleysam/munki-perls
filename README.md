@@ -301,13 +301,13 @@ bare scalar members are treated as strings.
 
 ## Upgrade compatibility
 
-Each upgrade plugin emits one boolean perl, evaluated against a single
-allow-list schema shared by all seventeen releases. Every release declares an
-`allow` list of conditions (a `model`, a `hardware_target`, or a `cpu` family
-and minimum clock speed, optionally combined with `all` for AND semantics),
-and a Mac is eligible if it matches at least one of them. The upgrade plugins
-share a reboot-scoped hardware snapshot and evaluate their named result in
-the same order:
+One plugin, `upgrade_supported.pl`, emits one boolean perl per eligible
+release, evaluated against a single allow-list schema shared by all
+seventeen. Every release declares an `allow` list of conditions (a `model`,
+a `hardware_target`, or a `cpu` family and minimum clock speed, optionally
+combined with `all` for AND semantics), and a Mac is eligible if it matches
+at least one of them. All seventeen share one reboot-scoped hardware
+snapshot and evaluate their named result in the same order:
 
 1. A Mac already at or above the target omits that release's perl instead of
    reporting `false`.
