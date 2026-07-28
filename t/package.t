@@ -151,13 +151,19 @@ my ($zopfli_path) = grep { -f $_ && -x _ } map {
 } File::Spec->path();
 my $has_zopfli = defined $zopfli_path;
 
-# Forcing a bare PATH exercises the "zopfli is not installed" fallback
-# deterministically, rather than depending on whether the test host
-# happens to have it. Every CI runner takes this branch unless zopfli was
-# explicitly installed for the release job.
+# The blank MUNKI_PERLS_ZOPFLI override, not just the reduced PATH, is what
+# actually makes "zopfli is not installed" deterministic here: a bare PATH
+# happens not to contain zopfli on every host this has been tested on, but
+# nothing guarantees that in general, and this fallback baseline is reused
+# below as the payload-size comparison every other test in this file
+# measures against.
 my $fallback_package = "$directory/fallback-0.1.43.pkg";
-my ($fallback_status, $fallback_log) = build_with_path(
-    $fallback_package, '/usr/bin:/usr/sbin:/bin:/sbin'
+my ($fallback_status, $fallback_log) = build_with_env(
+    $fallback_package,
+    {
+        PATH => '/usr/bin:/usr/sbin:/bin:/sbin',
+        MUNKI_PERLS_ZOPFLI => '',
+    }
 );
 is($fallback_status, 0, 'package still builds with zopfli unavailable');
 like(
